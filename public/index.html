@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>[ SAT_NAS TELEMETRY PANEL ]</title>
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  <div class="grid-container">
+    <header class="grid-header">
+      <span class="title">[ SAT_NAS TELEMETRY PANEL v1.0 ]</span>
+      <div class="led-container">
+        <span id="led-internet" class="led led-red">[ WAN INTERNET: DOWN ]</span>
+        <span id="led-usb" class="led led-red">[ USB TETHER: OFFLINE ]</span>
+        <span id="led-gateway" class="led led-green">[ GATEWAY: ACTIVE ]</span>
+      </div>
+      <button id="logout-btn" class="brut-btn-header">[ LOGOUT ]</button>
+    </header>
+
+    <section class="panel-brut">
+      <div class="panel-header">[ SYSTEM UTILIZATION ]</div>
+      <div class="panel-body">
+        <div class="metric">
+          <span class="label">UPTIME: <span id="val-uptime" class="value">--</span></span>
+        </div>
+        <div class="metric">
+          <span class="label">CPU USAGE:</span>
+          <div id="bar-cpu" class="ascii-bar">[░░░░░░░░░░] 0%</div>
+        </div>
+        <div class="metric">
+          <span class="label">RAM USAGE:</span>
+          <div id="bar-ram" class="ascii-bar">[░░░░░░░░░░] 0%</div>
+          <div class="sub-text"><span id="val-ram-used">0</span>MB / <span id="val-ram-total">0</span>MB</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel-brut">
+      <div class="panel-header">[ STORAGE DEVICE MOUNTS ]</div>
+      <div class="panel-body" id="disks-container">
+        <!-- Discos cargados dinamicamente -->
+      </div>
+    </section>
+
+    <section class="panel-brut" style="grid-column: span 2;">
+      <div class="panel-header">[ DOCKER CONTAINERS ]</div>
+      <div class="panel-body">
+        <table class="brut-table">
+          <thead>
+            <tr>
+              <th>CONTAINER</th>
+              <th>STATUS</th>
+              <th>ACTION</th>
+            </tr>
+          </thead>
+          <tbody id="docker-tbody">
+            <!-- Contenedores cargados dinamicamente -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="panel-brut grid-footer">
+      <div class="panel-header">[ SYSTEM CONTROL & DIAGNOSTICS ]</div>
+      <div class="panel-body console-grid">
+        <div class="actions-buttons">
+          <button id="btn-restart-network" class="brut-btn action-btn">[ RESTART NETWORK ]</button>
+          <button id="btn-fix-usb" class="brut-btn action-btn">[ APPLY USB FIX ]</button>
+        </div>
+        <div class="console-controls">
+          <div class="input-row">
+            <select id="diag-cmd">
+              <option value="ping">PING</option>
+              <option value="nslookup">NSLOOKUP</option>
+              <option value="traceroute">TRACEROUTE</option>
+            </select>
+            <input type="text" id="diag-target" placeholder="TARGET IP/DOMAIN" value="google.com">
+            <button id="btn-run-diag" class="brut-btn" style="width: auto; padding: 8px 20px;">[ EXECUTE ]</button>
+          </div>
+          <pre id="console-output" class="terminal">[ CONSOLE SYSTEM READY. WAITING INPUT... ]</pre>
+        </div>
+      </div>
+    </footer>
+  </div>
+  <script src="index.js"></script>
+</body>
+</html>

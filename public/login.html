@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>[ SAT_NAS ACCESS CONTROL ]</title>
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  <div class="login-container">
+    <div class="panel-header">[ SAT_NAS ACCESS CONTROL ]</div>
+    <div class="panel-body">
+      <form id="login-form">
+        <div class="form-group">
+          <label>[ USERNAME ]</label>
+          <input type="text" id="username" required autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label>[ PASSWORD ]</label>
+          <input type="password" id="password" required>
+        </div>
+        <button type="submit" class="brut-btn">[ AUTHORIZE ]</button>
+        <div id="login-error" class="alert-error" style="display: none;">[ ERROR: ACCESS DENIED ]</div>
+      </form>
+    </div>
+  </div>
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const errDiv = document.getElementById('login-error');
+      errDiv.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+
+        if (res.ok) {
+          window.location.href = '/';
+        } else {
+          errDiv.style.display = 'block';
+        }
+      } catch (err) {
+        errDiv.innerText = '[ ERROR: CONNECTION FAILED ]';
+        errDiv.style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>

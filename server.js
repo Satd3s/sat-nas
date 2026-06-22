@@ -227,6 +227,18 @@ app.post('/api/actions/diagnose', requireAuth, (req, res) => {
   });
 });
 
+// Redireccionar al login si no tiene sesion
+app.get(['/', '/index.html'], (req, res, next) => {
+  const { session_token } = req.signedCookies;
+  if (session_token && session_token === 'active_admin_session') {
+    return next();
+  }
+  res.redirect('/login.html');
+});
+
+// Servir archivos estaticos
+app.use(express.static(path.join(__dirname, 'public')));
+
 if (require.main === module) {
   app.listen(8090, () => console.log('Server active on port 8090'));
 } else {

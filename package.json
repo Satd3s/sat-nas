@@ -1,0 +1,14 @@
+{
+  "name": "sat_nas_telemetry",
+  "version": "1.0.0",
+  "description": "Brutalist telemetry panel for SAT_NAS",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cookie-parser": "^1.4.6"
+  }
+}

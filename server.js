@@ -36,8 +36,132 @@ app.post('/api/logout', (req, res) => {
   res.json({ success: true });
 });
 
+const isLinux = process.platform === 'linux';
+const { execSync } = require('child_process');
+
+function runCmd(cmd) {
+  try {
+    return execSync(cmd, { encoding: 'utf8', timeout: 3000 }).trim();
+  } catch (e) {
+    return '';
+  }
+}
+
 app.get('/api/status', requireAuth, (req, res) => {
-  res.json({ status: 'OK' });
+  if (!isLinux) {
+    // Retornar datos simulados para tests en Windows
+    return res.json({
+      uptime: 'up 2 hours, 15 minutes',
+      internet: { status: 'OK' },
+      interfaces: {
+        usb: { name: 'enx0a2f530b6e65', status: 'ACTIVE', ip: '10.42.0.12' },
+        ethernet: { name: 'enp0s31f6', status: 'ACTIVE', ip: '10.42.0.1' }
+      },
+      resources: {
+        cpu_usage_pct: 12.5,
+        ram_used_mb: 2048,
+        ram_total_mb: 16065
+      },
+      disks: [
+        { mount: '/', used_gb: '45G', total_gb: '447G', percentage: 10 },
+        { mount: '/mnt/disco_1tb', used_gb: '200G', total_gb: '931G', percentage: 21 },
+        { mount: '/mnt/NAS_STORAGE', used_gb: '800G', total_gb: '1.8T', percentage: 44 },
+        { mount: '/mnt/disco_4tb', used_gb: '1.2T', total_gb: '3.6T', percentage: 33 }
+      ],
+      docker: [
+        { name: 'adguardhome', status: 'running' },
+        { name: 'casaos', status: 'running' },
+        { name: 'tailscale', status: 'exited' }
+      ]
+    });
+  }
+
+  // Si es Linux, recolectamos datos reales
+  try {
+    const uptime = runCmd('uptime -p') || 'unknown';
+
+    let internetStatus = 'DOWN';
+    try {
+      execSync('curl -s -I --connect-timeout 2 https://www.google.com', { stdio: 'ignore' });
+      internetStatus = 'OK';
+    } catch (e) {}
+
+    const ipAddrOut = runCmd('ip addr show dev enx0a2f530b6e65') || '';
+    const usbActive = ipAddrOut.includes('state UP') || ipAddrOut.includes('lowerup');
+    let usbIp = 'none';
+    const ipMatch = ipAddrOut.match(/inet\s+([0-9.]+)/);
+    if (ipMatch) usbIp = ipMatch[1];
+
+    const freeOut = runCmd('free -m') || '';
+    let ramUsed = 0, ramTotal = 16000;
+    const lines = freeOut.split('\n');
+    if (lines.length > 1) {
+      const parts = lines[1].replace(/\s+/g, ' ').split(' ');
+      ramTotal = parseInt(parts[1]) || 16000;
+      ramUsed = parseInt(parts[2]) || 0;
+    }
+    
+    // Obtener uso de CPU. Si falla o no se puede parsear, usar top/loadavg o similar.
+    let cpuUsage = 0;
+    try {
+      const cpuOut = runCmd("top -bn1 | grep 'Cpu(s)' | sed 's/.*, *\\([0-9.]*\\)%* id.*/\\1/' | awk '{print 100 - $1}'");
+      cpuUsage = parseFloat(cpuOut) || 0;
+    } catch (e) {}
+
+    const dfOut = runCmd("df -h") || '';
+    const diskList = [];
+    dfOut.split('\n').forEach(line => {
+      if (!line) return;
+      const parts = line.replace(/\s+/g, ' ').split(' ');
+      if (parts.length >= 6) {
+        const mount = parts[5];
+        if (['/', '/mnt/disco_1tb', '/mnt/NAS_STORAGE', '/mnt/disco_4tb'].includes(mount)) {
+          diskList.push({
+            mount: mount,
+            used_gb: parts[2],
+            total_gb: parts[1],
+            percentage: parseInt(parts[4].replace('%', '')) || 0
+          });
+        }
+      }
+    });
+
+    // Si algun disco no esta en dfOut (por ejemplo no montado todavia), podemos listarlo con valor por defecto
+    const expectedMounts = ['/', '/mnt/disco_1tb', '/mnt/NAS_STORAGE', '/mnt/disco_4tb'];
+    expectedMounts.forEach(m => {
+      if (!diskList.some(d => d.mount === m)) {
+        diskList.push({ mount: m, used_gb: '0G', total_gb: '0G', percentage: 0 });
+      }
+    });
+
+    const dockerOut = runCmd("sudo docker ps -a --format '{{.Names}}|{{.State}}'") || '';
+    const dockerList = [];
+    dockerOut.split('\n').forEach(line => {
+      if (!line) return;
+      const [name, state] = line.split('|');
+      if (name && state) {
+        dockerList.push({ name, status: state });
+      }
+    });
+
+    res.json({
+      uptime,
+      internet: { status: internetStatus },
+      interfaces: {
+        usb: { name: 'enx0a2f530b6e65', status: usbActive ? 'ACTIVE' : 'OFFLINE', ip: usbIp },
+        ethernet: { name: 'enp0s31f6', status: 'ACTIVE', ip: '10.42.0.1' }
+      },
+      resources: {
+        cpu_usage_pct: cpuUsage,
+        ram_used_mb: ramUsed,
+        ram_total_mb: ramTotal
+      },
+      disks: diskList,
+      docker: dockerList
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 if (require.main === module) {

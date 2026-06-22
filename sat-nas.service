@@ -1,0 +1,14 @@
+[Unit]
+Description=SAT_NAS Telemetry Dashboard Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/sat-nas
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+Environment=PORT=8090 NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

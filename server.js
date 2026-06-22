@@ -164,6 +164,69 @@ app.get('/api/status', requireAuth, (req, res) => {
   }
 });
 
+const { exec } = require('child_process');
+
+// Accion: Reiniciar Red
+app.post('/api/actions/restart-network', requireAuth, (req, res) => {
+  if (!isLinux) {
+    return res.json({ success: true, output: 'SIMULATED: Network restarted connection "Perfil 1"' });
+  }
+  exec('sudo nmcli connection up "Perfil 1"', (err, stdout, stderr) => {
+    if (err) return res.status(500).json({ error: stderr || err.message });
+    res.json({ success: true, output: stdout || 'Network connection Perfil 1 activated.' });
+  });
+});
+
+// Accion: Corregir Ahorro de Energia USB (Autosuspend)
+app.post('/api/actions/fix-usb', requireAuth, (req, res) => {
+  if (!isLinux) {
+    return res.json({ success: true, output: 'SIMULATED: USB autosuspend set to -1, control set to on' });
+  }
+  const cmd = `echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend && for f in /sys/bus/usb/devices/*/power/control; do echo on | sudo tee $f; done && sudo udevadm control --reload-rules && sudo udevadm trigger`;
+  exec(cmd, (err, stdout, stderr) => {
+    if (err) return res.status(500).json({ error: stderr || err.message });
+    res.json({ success: true, output: 'USB fix applied successfully' });
+  });
+});
+
+// Accion: Alternar estado de Contenedor Docker
+app.post('/api/actions/docker-toggle', requireAuth, (req, res) => {
+  const { name, action } = req.body;
+  if (!name || !['start', 'stop'].includes(action)) {
+    return res.status(400).json({ error: 'INVALID_PARAMETERS' });
+  }
+  if (!isLinux) {
+    return res.json({ success: true });
+  }
+  const cmd = `sudo docker ${action} ${name}`;
+  exec(cmd, (err, stdout, stderr) => {
+    if (err) return res.status(500).json({ error: stderr || err.message });
+    res.json({ success: true });
+  });
+});
+
+// Accion: Diagnosticos de Red (Ping, NSLookup, Traceroute)
+app.post('/api/actions/diagnose', requireAuth, (req, res) => {
+  const { command, target } = req.body;
+  if (!['ping', 'nslookup', 'traceroute'].includes(command) || !target) {
+    return res.status(400).json({ error: 'INVALID_PARAMETERS' });
+  }
+
+  const safeTarget = target.replace(/[^a-zA-Z0-9.-]/g, '');
+  let shellCmd = '';
+  if (command === 'ping') {
+    shellCmd = isLinux ? `ping -c 4 ${safeTarget}` : `ping -n 4 ${safeTarget}`;
+  } else if (command === 'nslookup') {
+    shellCmd = `nslookup ${safeTarget}`;
+  } else if (command === 'traceroute') {
+    shellCmd = isLinux ? `traceroute -m 15 ${safeTarget}` : `tracert -h 15 ${safeTarget}`;
+  }
+
+  exec(shellCmd, { timeout: 15000 }, (err, stdout, stderr) => {
+    res.json({ output: stdout + (stderr ? '\n' + stderr : '') });
+  });
+});
+
 if (require.main === module) {
   app.listen(8090, () => console.log('Server active on port 8090'));
 } else {

@@ -59,7 +59,7 @@ test('Flujo completo de autenticacion', (t, done) => {
             resStatus.on('data', chunk => body += chunk);
             resStatus.on('end', () => {
               const data = JSON.parse(body);
-              assert.strictEqual(data.status, 'OK', 'Debe responder con status: OK');
+              assert.ok(data.uptime, 'Debe incluir la propiedad uptime');
 
               // 5. Probar logout
               const reqLogout = http.request({

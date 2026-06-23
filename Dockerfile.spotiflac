@@ -4,11 +4,8 @@ ARG SPOTIFLAC_VERSION=v7.1.9
 ENV APP_NAME="SpotiFLAC"
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Renombrar temporalmente el mkdir real e imprimir los argumentos para depurar
-RUN MKDIR_PATH=$(which mkdir) && \
-    mv $MKDIR_PATH ${MKDIR_PATH}.real && \
-    printf '#!/bin/sh\necho "MKDIR WRAPPER CALLED WITH: $@" >&2\nfor arg in "$@"; do\n  if [ "$arg" = "/run" ] || [ "$arg" = "/run/" ] || [ "$arg" = "/var/run" ] || [ "$arg" = "/var/run/" ]; then\n    echo "MATCHED /run, BYPASSING" >&2\n    exit 0\n  fi\ndone\nexec %s.real "$@"\n' "$MKDIR_PATH" > $MKDIR_PATH && \
-    chmod +x $MKDIR_PATH
+# Asegurar que el destino del enlace simbólico /run (/tmp/run) existe durante la compilación
+RUN mkdir -p /tmp/run
 
 # Instalar dependencias
 RUN apt-get update && apt-get install -y \
@@ -20,10 +17,6 @@ RUN apt-get update && apt-get install -y \
     libglu1-mesa \
     libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
-
-# Restaurar el mkdir real
-RUN MKDIR_PATH=$(which mkdir) && \
-    mv -f ${MKDIR_PATH}.real $MKDIR_PATH
 
 # Descargar y extraer la AppImage de SpotiFLAC
 RUN mkdir -p /opt/spotiflac && \

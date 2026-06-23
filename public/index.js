@@ -194,6 +194,8 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
 
 let upgraderInterval = null;
 let upgraderLinks = [];
+let allCandidates = [];
+let isCheckingSequence = false;
 
 function makeAsciiBar20(pct) {
   const rounded = Math.min(100, Math.max(0, parseFloat(pct) || 0));
@@ -246,6 +248,10 @@ async function pollUpgraderStatus() {
           </tr>
         `;
         if (copyBtn) copyBtn.style.display = 'none';
+        
+        const filterInput = document.getElementById('upgrader-filter-container');
+        if (filterInput) filterInput.style.display = 'none';
+        
       } else if (data.state === 'completed') {
         if (upgraderInterval) {
           clearInterval(upgraderInterval);
@@ -258,29 +264,37 @@ async function pollUpgraderStatus() {
           runBtn.innerText = '[ SCAN LIBRARY ]';
         }
         
-        upgraderLinks = data.results.map(r => r.qobuzUrl);
+        allCandidates = data.results;
+        upgraderLinks = data.results.filter(r => r.checked && r.qobuzUrl).map(r => r.qobuzUrl);
         
-        if (data.results.length === 0) {
+        if (allCandidates.length === 0) {
           tbody.innerHTML = `
             <tr>
-              <td colspan="5" class="sub-text" style="text-align: center;">[ NO UPGRADES DETECTED. ALL ALBUMS ARE 24-BIT OR NOT FOUND ON QOBUZ ]</td>
+              <td colspan="5" class="sub-text" style="text-align: center;">[ NO ALBUMS TO UPGRADE DETECTED. ALL LOCAL FILES ARE HI-RES OR DIRECTORY WAS EMPTY ]</td>
             </tr>
           `;
           if (copyBtn) copyBtn.style.display = 'none';
+          const filterInput = document.getElementById('upgrader-filter-container');
+          if (filterInput) filterInput.style.display = 'none';
         } else {
-          tbody.innerHTML = '';
-          data.results.forEach(item => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-              <td>${item.artist.toUpperCase()}</td>
-              <td>${item.album.toUpperCase()}</td>
-              <td style="color: #888;">${item.currentQuality.toUpperCase()}</td>
-              <td style="color: #00ff00;">${item.newQuality.toUpperCase()}</td>
-              <td><a href="${item.qobuzUrl}" target="_blank" style="color: #ffb000; text-decoration: underline;">[ LINK ]</a></td>
-            `;
-            tbody.appendChild(row);
-          });
-          if (copyBtn) copyBtn.style.display = 'inline-block';
+          injectFilterContainer();
+          
+          const filterInput = document.getElementById('upgrader-filter');
+          const query = filterInput ? filterInput.value.toLowerCase() : '';
+          const filtered = allCandidates.filter(c => 
+            c.artist.toLowerCase().includes(query) || c.album.toLowerCase().includes(query)
+          );
+          
+          renderCandidatesTable(filtered);
+          
+          if (copyBtn) {
+            if (upgraderLinks.length > 0) {
+              copyBtn.style.display = 'inline-block';
+              copyBtn.innerText = `[ COPY ALL ${upgraderLinks.length} LINKS ]`;
+            } else {
+              copyBtn.style.display = 'none';
+            }
+          }
         }
       } else if (data.state === 'error') {
         if (upgraderInterval) {
@@ -302,12 +316,206 @@ async function pollUpgraderStatus() {
           </tr>
         `;
         if (copyBtn) copyBtn.style.display = 'none';
+        const filterInput = document.getElementById('upgrader-filter-container');
+        if (filterInput) filterInput.style.display = 'none';
       }
     }
   } catch (err) {
     console.error('Error fetching upgrader status', err);
   }
 }
+
+function injectFilterContainer() {
+  let filterContainer = document.getElementById('upgrader-filter-container');
+  if (!filterContainer) {
+    filterContainer = document.createElement('div');
+    filterContainer.id = 'upgrader-filter-container';
+    filterContainer.className = 'input-row';
+    filterContainer.style.margin = '15px 0 10px 0';
+    filterContainer.innerHTML = `
+      <span class="label">SEARCH FILTER:</span>
+      <input type="text" id="upgrader-filter" placeholder="SEARCH ARTIST OR ALBUM..." style="flex-grow: 1; margin: 0 15px;">
+      <button id="btn-check-all-filtered" class="brut-btn" style="width: auto; padding: 4px 12px;">[ CHECK ALL FILTERED ]</button>
+    `;
+    
+    const tbody = document.getElementById('upgrader-tbody');
+    const table = tbody.closest('.brut-table');
+    table.parentNode.insertBefore(filterContainer, table);
+    
+    const filterInput = document.getElementById('upgrader-filter');
+    filterInput.addEventListener('input', (e) => {
+      const query = e.target.value.toLowerCase();
+      const filtered = allCandidates.filter(c => 
+        c.artist.toLowerCase().includes(query) || c.album.toLowerCase().includes(query)
+      );
+      renderCandidatesTable(filtered);
+    });
+    
+    document.getElementById('btn-check-all-filtered').addEventListener('click', () => {
+      checkAllFilteredSequentially();
+    });
+  } else {
+    filterContainer.style.display = 'flex';
+  }
+}
+
+function renderCandidatesTable(candidates) {
+  const tbody = document.getElementById('upgrader-tbody');
+  if (!tbody) return;
+  
+  tbody.innerHTML = '';
+  
+  if (candidates.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5" class="sub-text" style="text-align: center;">[ NO ALBUMS MATCHING FILTER ]</td>
+      </tr>
+    `;
+    return;
+  }
+  
+  const maxRender = 100;
+  const itemsToRender = candidates.slice(0, maxRender);
+  
+  itemsToRender.forEach(item => {
+    const row = document.createElement('tr');
+    
+    let qualityCol = '';
+    let linkCol = '';
+    
+    if (!item.checked) {
+      qualityCol = `<span style="color: #ffb000;">PENDING</span>`;
+      linkCol = `<button class="brut-btn-sm btn-check-single" onclick="checkSingleAlbum(this, '${item.artist.replace(/'/g, "\\'")}', '${item.album.replace(/'/g, "\\'")}')">[ CHECK QOBUZ ]</button>`;
+    } else if (item.qobuzUrl) {
+      qualityCol = `<span style="color: #00ff00;">24-BIT HI-RES</span>`;
+      linkCol = `<a href="${item.qobuzUrl}" target="_blank" style="color: #ffb000; text-decoration: underline;">[ LINK ]</a>`;
+    } else {
+      qualityCol = `<span style="color: #888;">16-BIT ONLY</span>`;
+      linkCol = `<span style="color: #666;">[ NO HI-RES ]</span>`;
+    }
+    
+    row.innerHTML = `
+      <td>${item.artist.toUpperCase()}</td>
+      <td>${item.album.toUpperCase()}</td>
+      <td style="color: #888;">${item.currentQuality.toUpperCase()}</td>
+      <td>${qualityCol}</td>
+      <td style="text-align: center; width: 140px;">${linkCol}</td>
+    `;
+    tbody.appendChild(row);
+  });
+  
+  if (candidates.length > maxRender) {
+    const footerRow = document.createElement('tr');
+    footerRow.innerHTML = `
+      <td colspan="5" class="sub-text" style="text-align: center; color: #888;">
+        [ DISPLAYING ${maxRender} OF ${candidates.length} CANDIDATES. USE THE SEARCH FILTER TO NARROW RESULTS ]
+      </td>
+    `;
+    tbody.appendChild(footerRow);
+  }
+}
+
+window.checkSingleAlbum = async function(buttonEl, artist, album) {
+  if (buttonEl) {
+    buttonEl.disabled = true;
+    buttonEl.innerText = '[ ... ]';
+  }
+  
+  try {
+    const url = `/api/upgrader/check-album?artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`;
+    const res = await fetch(url);
+    if (res.status === 401) {
+      window.location.href = 'login.html';
+      return;
+    }
+    
+    const data = await res.json();
+    
+    const found = allCandidates.find(c => c.artist === artist && c.album === album);
+    if (found) {
+      found.checked = true;
+      found.qobuzUrl = data.hasHiRes ? data.qobuzUrl : '';
+      
+      if (data.hasHiRes) {
+        if (!upgraderLinks.includes(data.qobuzUrl)) {
+          upgraderLinks.push(data.qobuzUrl);
+        }
+      }
+    }
+    
+    const copyBtn = document.getElementById('btn-copy-upgrader-links');
+    if (copyBtn) {
+      if (upgraderLinks.length > 0) {
+        copyBtn.style.display = 'inline-block';
+        copyBtn.innerText = `[ COPY ALL ${upgraderLinks.length} LINKS ]`;
+      } else {
+        copyBtn.style.display = 'none';
+      }
+    }
+    
+    const filterInput = document.getElementById('upgrader-filter');
+    const query = filterInput ? filterInput.value.toLowerCase() : '';
+    const filtered = allCandidates.filter(c => 
+      c.artist.toLowerCase().includes(query) || c.album.toLowerCase().includes(query)
+    );
+    renderCandidatesTable(filtered);
+    
+  } catch (err) {
+    console.error('Error checking album', err);
+    if (buttonEl) {
+      buttonEl.disabled = false;
+      buttonEl.innerText = '[ RETRY ]';
+    }
+  }
+};
+
+window.checkAllFilteredSequentially = async function() {
+  if (isCheckingSequence) {
+    isCheckingSequence = false;
+    document.getElementById('btn-check-all-filtered').innerText = '[ CHECK ALL FILTERED ]';
+    return;
+  }
+  
+  const filterInput = document.getElementById('upgrader-filter');
+  const query = filterInput ? filterInput.value.toLowerCase() : '';
+  const filtered = allCandidates.filter(c => 
+    !c.checked && (c.artist.toLowerCase().includes(query) || c.album.toLowerCase().includes(query))
+  );
+  
+  if (filtered.length === 0) {
+    alert('NO PENDING ALBUMS FOUND IN THE CURRENT FILTER.');
+    return;
+  }
+  
+  isCheckingSequence = true;
+  const actionBtn = document.getElementById('btn-check-all-filtered');
+  actionBtn.innerText = '[ CANCEL SEQUENCE ]';
+  actionBtn.style.color = '#ff0000';
+  
+  const consoleOut = document.getElementById('console-output');
+  if (consoleOut) consoleOut.innerText = `> STARTING SEQUENTIAL QOBUZ VERIFICATION FOR ${filtered.length} ALBUMS...\n`;
+  
+  let count = 0;
+  for (const item of filtered) {
+    if (!isCheckingSequence) {
+      if (consoleOut) consoleOut.innerText += `> SEQUENCE CANCELLED BY USER.\n`;
+      break;
+    }
+    
+    if (consoleOut) consoleOut.innerText += `> CHECKING QOBUZ FOR: ${item.artist.toUpperCase()} - ${item.album.toUpperCase()}...\n`;
+    
+    await checkSingleAlbum(null, item.artist, item.album);
+    count++;
+    
+    // Esperar 1.5 segundos para evitar rate limit de Qobuz
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+  
+  isCheckingSequence = false;
+  actionBtn.innerText = '[ CHECK ALL FILTERED ]';
+  actionBtn.style.color = '#ffb000';
+  if (consoleOut) consoleOut.innerText += `> SEQUENTIAL CHECK COMPLETE. PROCESSED ${count} ALBUMS.\n`;
+};
 
 // Event listener to trigger scanning
 const runUpgraderBtn = document.getElementById('btn-run-upgrader');

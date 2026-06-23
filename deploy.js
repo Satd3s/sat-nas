@@ -9,7 +9,7 @@ const SSH_CONFIG = {
   port: 22,
   username: 'satde',
   password: 'satdes2155',
-  localAddress: '192.168.0.221'
+  localAddress: '192.168.0.151'
 };
 
 const REMOTE_TEMP_DIR = '/home/satde/sat-nas';

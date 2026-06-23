@@ -190,6 +190,223 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
   }
 });
 
+// === HERMES MUSIC UPGRADER UI LOGIC ===
+
+let upgraderInterval = null;
+let upgraderLinks = [];
+
+function makeAsciiBar20(pct) {
+  const rounded = Math.min(100, Math.max(0, parseFloat(pct) || 0));
+  const blocks = Math.round(rounded / 5); // 20 blocks total
+  let bar = '';
+  for (let i = 0; i < 20; i++) {
+    bar += i < blocks ? '█' : '░';
+  }
+  return `[${bar}] ${Math.round(rounded)}%`;
+}
+
+async function pollUpgraderStatus() {
+  try {
+    const res = await fetch('/api/upgrader/status');
+    if (res.status === 401) {
+      window.location.href = 'login.html';
+      return;
+    }
+    const data = await res.json();
+    
+    const statusTextEl = document.getElementById('upgrader-status-text');
+    if (statusTextEl) {
+      statusTextEl.innerText = data.state.toUpperCase();
+      if (data.state === 'scanning') {
+        statusTextEl.style.color = '#ffb000';
+      } else if (data.state === 'completed') {
+        statusTextEl.style.color = '#00ff00';
+      } else if (data.state === 'error') {
+        statusTextEl.style.color = '#ff0000';
+      } else {
+        statusTextEl.style.color = '#ffb000';
+      }
+    }
+    
+    const barEl = document.getElementById('bar-upgrader');
+    if (barEl) {
+      barEl.innerText = makeAsciiBar20(data.progress);
+    }
+    
+    const tbody = document.getElementById('upgrader-tbody');
+    const copyBtn = document.getElementById('btn-copy-upgrader-links');
+    
+    if (tbody) {
+      if (data.state === 'scanning') {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" class="sub-text" style="text-align: center; color: #ffb000;">
+              [ SCANNING FILES: ${data.processedFiles} / ${data.totalFiles || '?'} ]
+            </td>
+          </tr>
+        `;
+        if (copyBtn) copyBtn.style.display = 'none';
+      } else if (data.state === 'completed') {
+        if (upgraderInterval) {
+          clearInterval(upgraderInterval);
+          upgraderInterval = null;
+        }
+        
+        const runBtn = document.getElementById('btn-run-upgrader');
+        if (runBtn) {
+          runBtn.disabled = false;
+          runBtn.innerText = '[ SCAN LIBRARY ]';
+        }
+        
+        upgraderLinks = data.results.map(r => r.qobuzUrl);
+        
+        if (data.results.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="5" class="sub-text" style="text-align: center;">[ NO UPGRADES DETECTED. ALL ALBUMS ARE 24-BIT OR NOT FOUND ON QOBUZ ]</td>
+            </tr>
+          `;
+          if (copyBtn) copyBtn.style.display = 'none';
+        } else {
+          tbody.innerHTML = '';
+          data.results.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+              <td>${item.artist.toUpperCase()}</td>
+              <td>${item.album.toUpperCase()}</td>
+              <td style="color: #888;">${item.currentQuality.toUpperCase()}</td>
+              <td style="color: #00ff00;">${item.newQuality.toUpperCase()}</td>
+              <td><a href="${item.qobuzUrl}" target="_blank" style="color: #ffb000; text-decoration: underline;">[ LINK ]</a></td>
+            `;
+            tbody.appendChild(row);
+          });
+          if (copyBtn) copyBtn.style.display = 'inline-block';
+        }
+      } else if (data.state === 'error') {
+        if (upgraderInterval) {
+          clearInterval(upgraderInterval);
+          upgraderInterval = null;
+        }
+        
+        const runBtn = document.getElementById('btn-run-upgrader');
+        if (runBtn) {
+          runBtn.disabled = false;
+          runBtn.innerText = '[ SCAN LIBRARY ]';
+        }
+        
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" class="sub-text" style="text-align: center; color: #ff0000;">
+              [ ERROR: ${data.error ? data.error.toUpperCase() : 'UNKNOWN ERROR'} ]
+            </td>
+          </tr>
+        `;
+        if (copyBtn) copyBtn.style.display = 'none';
+      }
+    }
+  } catch (err) {
+    console.error('Error fetching upgrader status', err);
+  }
+}
+
+// Event listener to trigger scanning
+const runUpgraderBtn = document.getElementById('btn-run-upgrader');
+if (runUpgraderBtn) {
+  runUpgraderBtn.addEventListener('click', async () => {
+    const pathInput = document.getElementById('upgrader-path');
+    const pathVal = pathInput ? pathInput.value : '';
+    const consoleOut = document.getElementById('console-output');
+    
+    if (!pathVal) {
+      if (consoleOut) consoleOut.innerText = '> ERROR: SPECIFY A VALID MUSIC PATH.';
+      return;
+    }
+    
+    if (consoleOut) consoleOut.innerText = `> STARTING HERMES UPGRADER ON: ${pathVal.toUpperCase()}...\n`;
+    runUpgraderBtn.disabled = true;
+    runUpgraderBtn.innerText = '[ SCANNING... ]';
+    
+    try {
+      const res = await fetch('/api/upgrader/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: pathVal })
+      });
+      
+      if (res.ok) {
+        if (consoleOut) consoleOut.innerText += `> UPGRADER SCAN STARTED IN BACKGROUND.\n`;
+        if (upgraderInterval) clearInterval(upgraderInterval);
+        upgraderInterval = setInterval(pollUpgraderStatus, 2000);
+        pollUpgraderStatus();
+      } else {
+        const errData = await res.json();
+        let errMsg = errData.error || 'UNKNOWN';
+        if (errMsg === 'DIRECTORY_NOT_FOUND') {
+          errMsg = 'DIRECTORY NOT FOUND OR UNREADABLE ON HOST.';
+        }
+        if (consoleOut) consoleOut.innerText += `> ERROR STARTING SCAN: ${errMsg}\n`;
+        runUpgraderBtn.disabled = false;
+        runUpgraderBtn.innerText = '[ SCAN LIBRARY ]';
+      }
+    } catch (err) {
+      if (consoleOut) consoleOut.innerText += `> SYSTEM ERROR: ${err.message}\n`;
+      runUpgraderBtn.disabled = false;
+      runUpgraderBtn.innerText = '[ SCAN LIBRARY ]';
+    }
+  });
+}
+
+// Event listener to copy links
+const copyUpgraderLinksBtn = document.getElementById('btn-copy-upgrader-links');
+if (copyUpgraderLinksBtn) {
+  copyUpgraderLinksBtn.addEventListener('click', () => {
+    const consoleOut = document.getElementById('console-output');
+    if (upgraderLinks.length === 0) {
+      if (consoleOut) consoleOut.innerText = `> NO LINKS TO COPY.\n`;
+      return;
+    }
+    
+    const textToCopy = upgraderLinks.join('\n');
+    navigator.clipboard.writeText(textToCopy)
+      .then(() => {
+        if (consoleOut) {
+          consoleOut.innerText = `> SUCCESSFULLY COPIED ${upgraderLinks.length} QOBUZ LINKS TO CLIPBOARD.\n`;
+          consoleOut.innerText += `> READY TO PASTE INTO SPOTIFLAC DOWNLOAD BAR.\n`;
+        }
+      })
+      .catch(err => {
+        if (consoleOut) {
+          consoleOut.innerText = `> FAILED TO COPY LINKS: ${err.message}\n`;
+          consoleOut.innerText += `> MANUAL LIST:\n${textToCopy}\n`;
+        }
+      });
+  });
+}
+
+// Check if scan in progress on initial load
+async function checkUpgraderOnLoad() {
+  try {
+    const res = await fetch('/api/upgrader/status');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.state === 'scanning') {
+        const runBtn = document.getElementById('btn-run-upgrader');
+        if (runBtn) {
+          runBtn.disabled = true;
+          runBtn.innerText = '[ SCANNING... ]';
+        }
+        upgraderInterval = setInterval(pollUpgraderStatus, 2000);
+        pollUpgraderStatus();
+      } else if (data.state === 'completed' && data.results.length > 0) {
+        pollUpgraderStatus();
+      }
+    }
+  } catch (err) {
+    console.error('Error checking initial upgrader status', err);
+  }
+}
+
 // Initial load & Setup polling
 fetchStatus();
 setInterval(fetchStatus, 3000);
+checkUpgraderOnLoad();

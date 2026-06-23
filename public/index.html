@@ -61,6 +61,42 @@
       </div>
     </section>
 
+    <section class="panel-brut" style="grid-column: span 2;">
+      <div class="panel-header">[ HERMES 24-BIT MUSIC UPGRADER ]</div>
+      <div class="panel-body upgrader-grid">
+        <div class="input-row">
+          <span class="label">MUSIC DIRECTORY:</span>
+          <input type="text" id="upgrader-path" placeholder="/mnt/disco_1tb/flac 24" value="/mnt/disco_1tb/flac 24">
+          <button id="btn-run-upgrader" class="brut-btn" style="width: auto; padding: 8px 20px;">[ SCAN LIBRARY ]</button>
+        </div>
+        <div class="status-row" style="margin-top: 10px; display: flex; align-items: center; justify-content: space-between;">
+          <span class="label">STATUS: <span id="upgrader-status-text" class="value" style="color: #ffb000;">IDLE</span></span>
+          <div id="bar-upgrader" class="ascii-bar" style="flex-grow: 1; margin-left: 20px;">[░░░░░░░░░░░░░░░░░░░░] 0%</div>
+        </div>
+        
+        <table class="brut-table" style="margin-top: 15px;">
+          <thead>
+            <tr>
+              <th>ARTIST</th>
+              <th>ALBUM</th>
+              <th>CURRENT</th>
+              <th>AVAILABLE</th>
+              <th>QOBUZ LINK</th>
+            </tr>
+          </thead>
+          <tbody id="upgrader-tbody">
+            <tr>
+              <td colspan="5" class="sub-text" style="text-align: center;">[ NO SCAN EXECUTED. AWAITING START... ]</td>
+            </tr>
+          </tbody>
+        </table>
+        
+        <div style="margin-top: 15px; display: flex; justify-content: flex-end;">
+          <button id="btn-copy-upgrader-links" class="brut-btn" style="width: auto; display: none;">[ COPY ALL 24-BIT LINKS ]</button>
+        </div>
+      </div>
+    </section>
+
     <footer class="panel-brut grid-footer">
       <div class="panel-header">[ SYSTEM CONTROL & DIAGNOSTICS ]</div>
       <div class="panel-body console-grid">

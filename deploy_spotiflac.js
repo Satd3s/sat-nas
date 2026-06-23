@@ -66,9 +66,12 @@ function runRemoteSetup() {
   const sudo = (cmd) => `echo "${sudoPass}" | sudo -S ${cmd}`;
   
   const commands = [
-    // 1. Crear directorios de configuración en host
+    // 1. Crear directorios de configuración y descargas en host
     sudo(`mkdir -p /opt/spotiflac-config`),
     sudo(`chown -R satde:satde /opt/spotiflac-config`),
+    sudo(`mkdir -p "/mnt/disco_1tb/flac 24"`),
+    sudo(`chown -R satde:satde "/mnt/disco_1tb/flac 24"`),
+    sudo(`chmod 777 "/mnt/disco_1tb/flac 24"`),
     
     // 2. Dar permisos de ejecución a los scripts
     `chmod +x ${REMOTE_DIR}/startapp.sh`,
@@ -81,8 +84,8 @@ function runRemoteSetup() {
     sudo(`docker stop spotiflac || true`),
     sudo(`docker rm spotiflac || true`),
     
-    // 5. Iniciar el nuevo contenedor
-    sudo(`docker run -d --name spotiflac --restart unless-stopped -p 8095:5800 -v /opt/spotiflac-config:/config -v /mnt/NAS_STORAGE/Music:/storage spotiflac:latest`),
+    // 5. Iniciar el nuevo contenedor mapeando al disco de 1 TB
+    sudo(`docker run -d --name spotiflac --restart unless-stopped -p 8095:5800 -v /opt/spotiflac-config:/config -v "/mnt/disco_1tb/flac 24":/storage spotiflac:latest`),
     
     // 6. Copiar script de actualización al home para fácil acceso
     `cp ${REMOTE_DIR}/update_spotiflac.sh /home/satde/update_spotiflac.sh`,

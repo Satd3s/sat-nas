@@ -12,6 +12,6 @@ sudo docker run -d --name spotiflac \
   --restart unless-stopped \
   -p 8095:5800 \
   -v /opt/spotiflac-config:/config \
-  -v /mnt/NAS_STORAGE/Music:/storage \
+  -v "/mnt/disco_1tb/flac 24":/storage \
   spotiflac:latest
 echo ">>> Actualización completada."

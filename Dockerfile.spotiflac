@@ -1,0 +1,25 @@
+FROM jlesage/baseimage-gui:ubuntu-22.04
+
+ARG SPOTIFLAC_VERSION=v7.1.9
+ENV APP_NAME="SpotiFLAC"
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    wget \
+    ca-certificates \
+    libwebkit2gtk-4.1-0 \
+    libnss3 \
+    libasound2 \
+    libglu1-mesa \
+    libgtk-3-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /opt/spotiflac && \
+    wget -q https://github.com/spotbye/SpotiFLAC/releases/download/${SPOTIFLAC_VERSION}/SpotiFLAC.AppImage -O /opt/spotiflac/SpotiFLAC.AppImage && \
+    chmod +x /opt/spotiflac/SpotiFLAC.AppImage && \
+    cd /opt/spotiflac && \
+    ./SpotiFLAC.AppImage --appimage-extract && \
+    rm -f /opt/spotiflac/SpotiFLAC.AppImage
+
+COPY startapp.sh /startapp.sh
+RUN chmod +x /startapp.sh

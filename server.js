@@ -275,34 +275,40 @@ function getAllAudioFiles(dirPath, arrayOfFiles = []) {
   return arrayOfFiles;
 }
 
-// Obtener metadatos mediante mediainfo (disponible nativo en el T30)
-function getAudioMetadata(filePath) {
-  try {
+// Obtener metadatos de manera asíncrona mediante mediainfo (disponible nativo en el T30)
+function getAudioMetadataAsync(filePath) {
+  return new Promise((resolve) => {
     const escapedPath = filePath.replace(/'/g, "'\\''");
-    const jsonStr = execSync(`mediainfo --Output=JSON '${escapedPath}'`, { encoding: 'utf8', timeout: 5000 }).trim();
-    const data = JSON.parse(jsonStr);
-    
-    const tracks = data.media && data.media.track ? data.media.track : [];
-    const general = tracks.find(t => t['@type'] === 'General') || {};
-    const audio = tracks.find(t => t['@type'] === 'Audio') || {};
-    
-    const artist = general.Performer || general.Album_Performer || 'Unknown Artist';
-    const album = general.Album || 'Unknown Album';
-    const title = general.Title || 'Unknown Title';
-    const bitDepth = parseInt(audio.BitDepth) || 16;
-    
-    return {
-      artist: artist ? artist.trim() : 'Unknown Artist',
-      album: album ? album.trim() : 'Unknown Album',
-      title: title ? title.trim() : 'Unknown Title',
-      bitDepth,
-      isHiRes: bitDepth >= 24,
-      ext: path.extname(filePath).toLowerCase()
-    };
-  } catch (err) {
-    console.error(`Error leyendo metadatos de ${filePath}:`, err);
-    return null;
-  }
+    require('child_process').exec(`mediainfo --Output=JSON '${escapedPath}'`, { timeout: 5000 }, (err, stdout, stderr) => {
+      if (err) {
+        console.error(`Error leyendo metadatos de ${filePath}:`, err.message);
+        return resolve(null);
+      }
+      try {
+        const data = JSON.parse(stdout.trim());
+        const tracks = data.media && data.media.track ? data.media.track : [];
+        const general = tracks.find(t => t['@type'] === 'General') || {};
+        const audio = tracks.find(t => t['@type'] === 'Audio') || {};
+        
+        const artist = general.Performer || general.Album_Performer || 'Unknown Artist';
+        const album = general.Album || 'Unknown Album';
+        const title = general.Title || 'Unknown Title';
+        const bitDepth = parseInt(audio.BitDepth) || 16;
+        
+        resolve({
+          artist: artist ? artist.trim() : 'Unknown Artist',
+          album: album ? album.trim() : 'Unknown Album',
+          title: title ? title.trim() : 'Unknown Title',
+          bitDepth,
+          isHiRes: bitDepth >= 24,
+          ext: path.extname(filePath).toLowerCase()
+        });
+      } catch (parseErr) {
+        console.error(`Error parseando metadatos de ${filePath}:`, parseErr.message);
+        resolve(null);
+      }
+    });
+  });
 }
 
 // Consultar la disponibilidad de versión Hi-Res de un álbum en Qobuz público
@@ -339,7 +345,7 @@ async function checkQobuzHiRes(artist, album) {
   }
 }
 
-// Orquestador del escáner en segundo plano
+// Orquestador del escáner en segundo plano (Asíncrono y Concurrente)
 async function runUpgraderScanner(targetPath) {
   try {
     upgraderStatus.state = 'scanning';
@@ -359,29 +365,43 @@ async function runUpgraderScanner(targetPath) {
     }
     
     const albumsMap = new Map();
+    const concurrencyLimit = 15; // Procesar hasta 15 archivos en paralelo
+    let index = 0;
     
-    // Fase 1: Leer metadatos locales (ocupa el 100% del progreso local)
-    for (const file of files) {
-      const meta = getAudioMetadata(file);
-      upgraderStatus.processedFiles++;
-      upgraderStatus.progress = Math.round((upgraderStatus.processedFiles / files.length) * 100);
-      
-      if (meta && meta.artist && meta.album) {
-        const key = `${meta.artist.toLowerCase()}|||${meta.album.toLowerCase()}`;
-        if (!albumsMap.has(key)) {
-          albumsMap.set(key, {
-            artist: meta.artist,
-            album: meta.album,
-            hasHiResLocal: false,
-            currentQuality: meta.ext === '.flac' ? `${meta.bitDepth}-Bit FLAC` : meta.ext.substring(1).toUpperCase()
-          });
-        }
+    async function worker() {
+      while (index < files.length) {
+        const fileIndex = index++;
+        const file = files[fileIndex];
         
-        if (meta.isHiRes) {
-          albumsMap.get(key).hasHiResLocal = true;
+        const meta = await getAudioMetadataAsync(file);
+        
+        upgraderStatus.processedFiles++;
+        upgraderStatus.progress = Math.round((upgraderStatus.processedFiles / files.length) * 100);
+        
+        if (meta && meta.artist && meta.album) {
+          const key = `${meta.artist.toLowerCase()}|||${meta.album.toLowerCase()}`;
+          if (!albumsMap.has(key)) {
+            albumsMap.set(key, {
+              artist: meta.artist,
+              album: meta.album,
+              hasHiResLocal: false,
+              currentQuality: meta.ext === '.flac' ? `${meta.bitDepth}-Bit FLAC` : meta.ext.substring(1).toUpperCase()
+            });
+          }
+          
+          if (meta.isHiRes) {
+            albumsMap.get(key).hasHiResLocal = true;
+          }
         }
       }
     }
+    
+    const workers = [];
+    for (let w = 0; w < Math.min(concurrencyLimit, files.length); w++) {
+      workers.push(worker());
+    }
+    
+    await Promise.all(workers);
     
     // Filtrar los que no son Hi-Res a nivel local y guardarlos como candidatos
     const albumsToCheck = [];

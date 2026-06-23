@@ -1,4 +1,4 @@
-FROM jlesage/baseimage-gui:ubuntu-22.04
+FROM jlesage/baseimage-gui:ubuntu-22.04-v4
 
 ARG SPOTIFLAC_VERSION=v7.1.9
 ENV APP_NAME="SpotiFLAC"

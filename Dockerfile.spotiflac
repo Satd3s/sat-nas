@@ -4,10 +4,10 @@ ARG SPOTIFLAC_VERSION=v7.1.9
 ENV APP_NAME="SpotiFLAC"
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Renombrar temporalmente el mkdir real para interceptar llamadas absolutas del postinst de systemd
+# Renombrar temporalmente el mkdir real y forzar el flag -p para evitar fallos si el directorio ya existe
 RUN MKDIR_PATH=$(which mkdir) && \
     mv $MKDIR_PATH ${MKDIR_PATH}.real && \
-    echo '#!/bin/sh\nif [ "$1" = "/run" ] || [ "$2" = "/run" ]; then exit 0; fi\nexec '"${MKDIR_PATH}"'.real "$@"' > $MKDIR_PATH && \
+    echo '#!/bin/sh\nexec '"${MKDIR_PATH}"'.real -p "$@"' > $MKDIR_PATH && \
     chmod +x $MKDIR_PATH
 
 # Instalar dependencias

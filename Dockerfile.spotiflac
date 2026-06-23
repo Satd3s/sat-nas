@@ -5,10 +5,13 @@ ENV APP_NAME="SpotiFLAC"
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Asegurar que el destino del enlace simbólico /run (/tmp/run) existe durante la compilación
-RUN mkdir -p /tmp/run
+# e inicializar los archivos de base de datos de usuarios (/tmp/.passwd y /tmp/.group)
+RUN mkdir -p /tmp/run && \
+    USER_ID=1000 GROUP_ID=1000 /etc/cont-init.d/10-init-users.sh
 
-# Instalar dependencias
-RUN apt-get update && apt-get install -y \
+# Instalar dependencias manejando temporalmente /var/log como directorio real para evitar fallos de scripts post-instalación (como systemd)
+RUN rm -rf /var/log && mkdir /var/log && \
+    apt-get update && apt-get install -y \
     wget \
     ca-certificates \
     libwebkit2gtk-4.1-0 \
@@ -16,6 +19,7 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     libglu1-mesa \
     libgtk-3-0 \
+    && rm -rf /var/log && ln -s /config/log /var/log \
     && rm -rf /var/lib/apt/lists/*
 
 # Descargar y extraer la AppImage de SpotiFLAC

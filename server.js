@@ -460,6 +460,53 @@ app.get('/api/upgrader/check-album', requireAuth, async (req, res) => {
   }
 });
 
+function downloadAlbumOnSpotiFLAC(qobuzUrl) {
+  try {
+    const safeUrl = qobuzUrl.replace(/[^a-zA-Z0-9-._~:/?#\[\]@!$&'()*+,;=]/g, '');
+    
+    const bashScript = `
+      export DISPLAY=:0
+      echo "${safeUrl}" | xclip -selection clipboard
+      WID=$(xdotool search --onlyvisible --class "SpotiFLAC" | head -n 1)
+      if [ -n "$WID" ]; then
+        xdotool windowactivate "$WID"
+        sleep 0.5
+        xdotool key ctrl+a Delete
+        sleep 0.2
+        xdotool key ctrl+v
+        sleep 0.2
+        xdotool key Return
+        echo "SUCCESS"
+      else
+        echo "WINDOW_NOT_FOUND"
+      fi
+    `;
+    
+    const escapedScript = bashScript.replace(/'/g, "'\\''");
+    const output = execSync(`echo "satdes2155" | sudo -S docker exec -i spotiflac bash -c '${escapedScript}'`, { encoding: 'utf8', timeout: 6000 }).trim();
+    
+    console.log(`>>> SpotiFLAC Auto-Downloader Output: ${output}`);
+    return output.includes('SUCCESS');
+  } catch (err) {
+    console.error('Error in downloadAlbumOnSpotiFLAC:', err);
+    return false;
+  }
+}
+
+app.post('/api/upgrader/download-album', requireAuth, (req, res) => {
+  const { qobuzUrl } = req.body;
+  if (!qobuzUrl) {
+    return res.status(400).json({ error: 'MISSING_QOBUZ_URL' });
+  }
+  
+  const success = downloadAlbumOnSpotiFLAC(qobuzUrl);
+  if (success) {
+    res.json({ success: true });
+  } else {
+    res.status(500).json({ error: 'FAILED_TO_INJECT_DOWNLOAD' });
+  }
+});
+
 // === SERVER LISTEN BLOCK ===
 if (require.main === module) {
   app.listen(8090, () => console.log('Server active on port 8090'));

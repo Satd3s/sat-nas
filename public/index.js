@@ -196,6 +196,7 @@ let upgraderInterval = null;
 let upgraderLinks = [];
 let allCandidates = [];
 let isCheckingSequence = false;
+let isDownloadingSequence = false;
 
 function makeAsciiBar20(pct) {
   const rounded = Math.min(100, Math.max(0, parseFloat(pct) || 0));
@@ -237,6 +238,7 @@ async function pollUpgraderStatus() {
     
     const tbody = document.getElementById('upgrader-tbody');
     const copyBtn = document.getElementById('btn-copy-upgrader-links');
+    const dlAllBtn = document.getElementById('btn-download-all-verified');
     
     if (tbody) {
       if (data.state === 'scanning') {
@@ -248,6 +250,7 @@ async function pollUpgraderStatus() {
           </tr>
         `;
         if (copyBtn) copyBtn.style.display = 'none';
+        if (dlAllBtn) dlAllBtn.style.display = 'none';
         
         const filterInput = document.getElementById('upgrader-filter-container');
         if (filterInput) filterInput.style.display = 'none';
@@ -274,6 +277,7 @@ async function pollUpgraderStatus() {
             </tr>
           `;
           if (copyBtn) copyBtn.style.display = 'none';
+          if (dlAllBtn) dlAllBtn.style.display = 'none';
           const filterInput = document.getElementById('upgrader-filter-container');
           if (filterInput) filterInput.style.display = 'none';
         } else {
@@ -291,8 +295,13 @@ async function pollUpgraderStatus() {
             if (upgraderLinks.length > 0) {
               copyBtn.style.display = 'inline-block';
               copyBtn.innerText = `[ COPY ALL ${upgraderLinks.length} LINKS ]`;
+              if (dlAllBtn) {
+                dlAllBtn.style.display = 'inline-block';
+                dlAllBtn.innerText = `[ DOWNLOAD ALL ${upgraderLinks.length} VERIFIED ]`;
+              }
             } else {
               copyBtn.style.display = 'none';
+              if (dlAllBtn) dlAllBtn.style.display = 'none';
             }
           }
         }
@@ -316,6 +325,7 @@ async function pollUpgraderStatus() {
           </tr>
         `;
         if (copyBtn) copyBtn.style.display = 'none';
+        if (dlAllBtn) dlAllBtn.style.display = 'none';
         const filterInput = document.getElementById('upgrader-filter-container');
         if (filterInput) filterInput.style.display = 'none';
       }
@@ -335,7 +345,8 @@ function injectFilterContainer() {
     filterContainer.innerHTML = `
       <span class="label">SEARCH FILTER:</span>
       <input type="text" id="upgrader-filter" placeholder="SEARCH ARTIST OR ALBUM..." style="flex-grow: 1; margin: 0 15px;">
-      <button id="btn-check-all-filtered" class="brut-btn" style="width: auto; padding: 4px 12px;">[ CHECK ALL FILTERED ]</button>
+      <button id="btn-check-all-filtered" class="brut-btn" style="width: auto; padding: 4px 12px; margin-right: 10px;">[ CHECK ALL FILTERED ]</button>
+      <button id="btn-download-all-verified" class="brut-btn" style="width: auto; padding: 4px 12px; display: none;">[ DOWNLOAD ALL VERIFIED ]</button>
     `;
     
     const tbody = document.getElementById('upgrader-tbody');
@@ -353,6 +364,10 @@ function injectFilterContainer() {
     
     document.getElementById('btn-check-all-filtered').addEventListener('click', () => {
       checkAllFilteredSequentially();
+    });
+    
+    document.getElementById('btn-download-all-verified').addEventListener('click', () => {
+      downloadAllVerifiedSequentially();
     });
   } else {
     filterContainer.style.display = 'flex';
@@ -388,7 +403,10 @@ function renderCandidatesTable(candidates) {
       linkCol = `<button class="brut-btn-sm btn-check-single" onclick="checkSingleAlbum(this, '${item.artist.replace(/'/g, "\\'")}', '${item.album.replace(/'/g, "\\'")}')">[ CHECK QOBUZ ]</button>`;
     } else if (item.qobuzUrl) {
       qualityCol = `<span style="color: #00ff00;">24-BIT HI-RES</span>`;
-      linkCol = `<a href="${item.qobuzUrl}" target="_blank" style="color: #ffb000; text-decoration: underline;">[ LINK ]</a>`;
+      linkCol = `
+        <a href="${item.qobuzUrl}" target="_blank" style="color: #ffb000; text-decoration: underline;">[ LINK ]</a>
+        <button class="brut-btn-sm btn-download-single" onclick="downloadSingleAlbum(this, '${item.qobuzUrl.replace(/'/g, "\\'")}')" style="margin-left: 10px; color: #00ff00; border-color: #00ff00;">[ DOWNLOAD ]</button>
+      `;
     } else {
       qualityCol = `<span style="color: #888;">16-BIT ONLY</span>`;
       linkCol = `<span style="color: #666;">[ NO HI-RES ]</span>`;
@@ -399,7 +417,7 @@ function renderCandidatesTable(candidates) {
       <td>${item.album.toUpperCase()}</td>
       <td style="color: #888;">${item.currentQuality.toUpperCase()}</td>
       <td>${qualityCol}</td>
-      <td style="text-align: center; width: 140px;">${linkCol}</td>
+      <td style="text-align: center; width: 220px;">${linkCol}</td>
     `;
     tbody.appendChild(row);
   });
@@ -444,12 +462,18 @@ window.checkSingleAlbum = async function(buttonEl, artist, album) {
     }
     
     const copyBtn = document.getElementById('btn-copy-upgrader-links');
+    const dlAllBtn = document.getElementById('btn-download-all-verified');
     if (copyBtn) {
       if (upgraderLinks.length > 0) {
         copyBtn.style.display = 'inline-block';
         copyBtn.innerText = `[ COPY ALL ${upgraderLinks.length} LINKS ]`;
+        if (dlAllBtn) {
+          dlAllBtn.style.display = 'inline-block';
+          dlAllBtn.innerText = `[ DOWNLOAD ALL ${upgraderLinks.length} VERIFIED ]`;
+        }
       } else {
         copyBtn.style.display = 'none';
+        if (dlAllBtn) dlAllBtn.style.display = 'none';
       }
     }
     
@@ -515,6 +539,126 @@ window.checkAllFilteredSequentially = async function() {
   actionBtn.innerText = '[ CHECK ALL FILTERED ]';
   actionBtn.style.color = '#ffb000';
   if (consoleOut) consoleOut.innerText += `> SEQUENTIAL CHECK COMPLETE. PROCESSED ${count} ALBUMS.\n`;
+};
+
+window.downloadSingleAlbum = async function(buttonEl, qobuzUrl) {
+  if (buttonEl) {
+    buttonEl.disabled = true;
+    buttonEl.innerText = '[ ... ]';
+    buttonEl.style.color = '#ffb000';
+    buttonEl.style.borderColor = '#ffb000';
+  }
+  
+  const consoleOut = document.getElementById('console-output');
+  if (consoleOut) consoleOut.innerText = `> SENDING DOWNLOAD TO SPOTIFLAC FOR LINK: ${qobuzUrl}\n`;
+  
+  try {
+    const res = await fetch('/api/upgrader/download-album', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qobuzUrl })
+    });
+    
+    if (res.ok) {
+      if (buttonEl) {
+        buttonEl.innerText = '[ SENT ]';
+        buttonEl.style.color = '#00ff00';
+        buttonEl.style.borderColor = '#00ff00';
+      }
+      if (consoleOut) consoleOut.innerText += `> DOWNLOAD REQUEST SUCCESSFULLY RECEIVED AND INJECTED.\n`;
+    } else {
+      const errData = await res.json();
+      if (buttonEl) {
+        buttonEl.disabled = false;
+        buttonEl.innerText = '[ RETRY ]';
+        buttonEl.style.color = '#ff0000';
+        buttonEl.style.borderColor = '#ff0000';
+      }
+      if (consoleOut) consoleOut.innerText += `> ERROR SENDING DOWNLOAD: ${errData.error || 'UNKNOWN'}\n`;
+    }
+  } catch (err) {
+    console.error('Error sending download', err);
+    if (buttonEl) {
+      buttonEl.disabled = false;
+      buttonEl.innerText = '[ RETRY ]';
+      buttonEl.style.color = '#ff0000';
+      buttonEl.style.borderColor = '#ff0000';
+    }
+    if (consoleOut) consoleOut.innerText += `> SYSTEM ERROR SENDING DOWNLOAD: ${err.message}\n`;
+  }
+};
+
+window.downloadAllVerifiedSequentially = async function() {
+  if (isDownloadingSequence) {
+    isDownloadingSequence = false;
+    document.getElementById('btn-download-all-verified').innerText = `[ DOWNLOAD ALL ${upgraderLinks.length} VERIFIED ]`;
+    return;
+  }
+  
+  if (upgraderLinks.length === 0) {
+    alert('NO VERIFIED HI-RES LINKS AVAILABLE TO DOWNLOAD.');
+    return;
+  }
+  
+  isDownloadingSequence = true;
+  const actionBtn = document.getElementById('btn-download-all-verified');
+  actionBtn.innerText = '[ CANCEL DOWNLOADS ]';
+  actionBtn.style.color = '#ff0000';
+  
+  const consoleOut = document.getElementById('console-output');
+  if (consoleOut) consoleOut.innerText = `> INITIATING BULK SPOTIFLAC DOWNLOAD INJECTIONS FOR ${upgraderLinks.length} ALBUMS...\n`;
+  
+  let count = 0;
+  for (const url of upgraderLinks) {
+    if (!isDownloadingSequence) {
+      if (consoleOut) consoleOut.innerText += `> DOWNLOAD SEQUENCE CANCELLED BY USER.\n`;
+      break;
+    }
+    
+    if (consoleOut) consoleOut.innerText += `> INJECTING LINK [${count + 1}/${upgraderLinks.length}] INTO SPOTIFLAC...\n`;
+    
+    let btnEl = null;
+    const buttons = document.querySelectorAll('.btn-download-single');
+    for (const btn of buttons) {
+      if (btn.getAttribute('onclick') && btn.getAttribute('onclick').includes(url)) {
+        btnEl = btn;
+        break;
+      }
+    }
+    
+    if (btnEl) {
+      btnEl.disabled = true;
+      btnEl.innerText = '[ ... ]';
+      btnEl.style.color = '#ffb000';
+      btnEl.style.borderColor = '#ffb000';
+    }
+    
+    const success = await fetch('/api/upgrader/download-album', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qobuzUrl: url })
+    }).then(res => {
+      if (res.ok) {
+        if (btnEl) {
+          btnEl.innerText = '[ SENT ]';
+          btnEl.style.color = '#00ff00';
+          btnEl.style.borderColor = '#00ff00';
+        }
+        return true;
+      }
+      return false;
+    }).catch(() => false);
+    
+    if (success) count++;
+    
+    // Esperar 2 segundos para dar tiempo holgado
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  
+  isDownloadingSequence = false;
+  actionBtn.innerText = `[ DOWNLOAD ALL ${upgraderLinks.length} VERIFIED ]`;
+  actionBtn.style.color = '#ffb000';
+  if (consoleOut) consoleOut.innerText += `> BULK DOWNLOAD INJECTION COMPLETE. INJECTED ${count} ALBUMS.\n`;
 };
 
 // Event listener to trigger scanning

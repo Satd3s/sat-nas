@@ -11,6 +11,7 @@ RUN mkdir -p /tmp/run && \
 
 # Instalar dependencias manejando temporalmente /var/log como directorio real para evitar fallos de scripts post-instalación (como systemd)
 RUN rm -rf /var/log && mkdir /var/log && \
+    (sed -i '/messagebus/d' /var/lib/dpkg/statoverride 2>/dev/null || true) && \
     apt-get update && apt-get install -y \
     wget \
     ca-certificates \
@@ -19,6 +20,8 @@ RUN rm -rf /var/log && mkdir /var/log && \
     libasound2 \
     libglu1-mesa \
     libgtk-3-0 \
+    xdotool \
+    xclip \
     && rm -rf /var/log && ln -s /config/log /var/log \
     && rm -rf /var/lib/apt/lists/*
 

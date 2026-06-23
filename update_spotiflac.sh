@@ -5,10 +5,10 @@ if [ -z "$NEW_VERSION" ]; then
   exit 1
 fi
 echo ">>> Actualizando SpotiFLAC a la versión $NEW_VERSION..."
-docker build --build-arg SPOTIFLAC_VERSION=$NEW_VERSION -f Dockerfile.spotiflac -t spotiflac:latest .
-docker stop spotiflac || true
-docker rm spotiflac || true
-docker run -d --name spotiflac \
+sudo docker build --build-arg SPOTIFLAC_VERSION=$NEW_VERSION -f Dockerfile.spotiflac -t spotiflac:latest .
+sudo docker stop spotiflac || true
+sudo docker rm spotiflac || true
+sudo docker run -d --name spotiflac \
   --restart unless-stopped \
   -p 8095:5800 \
   -v /opt/spotiflac-config:/config \

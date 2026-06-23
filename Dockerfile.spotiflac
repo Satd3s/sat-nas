@@ -4,7 +4,12 @@ ARG SPOTIFLAC_VERSION=v7.1.9
 ENV APP_NAME="SpotiFLAC"
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y \
+# Crear un wrapper temporal para evitar que el instalador de systemd falle al crear /run
+RUN echo '#!/bin/sh\nif [ "$1" = "/run" ] || [ "$2" = "/run" ]; then exit 0; fi\nexec /bin/mkdir "$@"' > /tmp/mkdir && \
+    chmod +x /tmp/mkdir
+
+RUN apt-get update && \
+    PATH=/tmp:$PATH apt-get install -y \
     wget \
     ca-certificates \
     libwebkit2gtk-4.1-0 \
@@ -12,7 +17,7 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     libglu1-mesa \
     libgtk-3-0 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /tmp/mkdir
 
 RUN mkdir -p /opt/spotiflac && \
     wget -q https://github.com/spotbye/SpotiFLAC/releases/download/${SPOTIFLAC_VERSION}/SpotiFLAC.AppImage -O /opt/spotiflac/SpotiFLAC.AppImage && \

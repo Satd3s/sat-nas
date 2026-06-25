@@ -97,6 +97,80 @@
       </div>
     </section>
 
+    <section class="panel-brut" style="grid-column: span 2;">
+      <div class="panel-header">[ DLNA MEDIA CASTING ]</div>
+      <div class="panel-body">
+        <div class="input-row">
+          <span class="label">TARGET TV/DEVICE:</span>
+          <select id="dlna-device-select" style="flex-grow: 1; margin-right: 10px;">
+            <option value="">[ NO DEVICES DETECTED - CLICK SCAN ]</option>
+          </select>
+          <button id="btn-scan-dlna" class="brut-btn" style="width: auto; padding: 8px 20px;">[ SCAN DEVICES ]</button>
+        </div>
+        <div class="input-row" style="margin-top: 15px;">
+          <span class="label">VIDEO / STREAM URL:</span>
+          <input type="text" id="dlna-video-url" placeholder="http://example.com/movie.mp4 o lista .m3u8" style="flex-grow: 1; margin-right: 10px;">
+          <button id="btn-cast-dlna" class="brut-btn" style="width: auto; padding: 8px 20px;">[ CAST TO TV ]</button>
+        </div>
+        <div class="control-row" style="margin-top: 15px; display: flex; gap: 10px;">
+          <button id="btn-dlna-play" class="brut-btn" style="width: auto; padding: 8px 20px;">[ PLAY ]</button>
+          <button id="btn-dlna-pause" class="brut-btn" style="width: auto; padding: 8px 20px;">[ PAUSE ]</button>
+          <button id="btn-dlna-stop" class="brut-btn" style="width: auto; padding: 8px 20px;">[ STOP ]</button>
+        </div>
+        <div class="status-row" style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+          <span class="label">DLNA STATUS: <span id="dlna-status-text" class="value" style="color: #ffb000;">IDLE</span></span>
+          <span class="sub-text" style="color: #ffb000;">* NOTA: Videos protegidos con DRM (Netflix, izzi go) no son compatibles con DLNA.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel-brut" style="grid-column: span 2;">
+      <div class="panel-header">[ IPTV CHANNEL GUIDE ]</div>
+      <div class="panel-body">
+        <div class="input-row">
+          <span class="label">IPTV M3U PLAYLIST URL:</span>
+          <input type="text" id="iptv-playlist-url" placeholder="http://example.com/playlist.m3u" style="flex-grow: 1; margin-right: 10px;" value="">
+          <button id="btn-load-iptv" class="brut-btn" style="width: auto; padding: 8px 20px;">[ SAVE & LOAD ]</button>
+        </div>
+        <div class="input-row" style="margin-top: 15px; display: flex; gap: 10px;">
+          <div style="flex-grow: 1;">
+            <span class="label">SEARCH:</span>
+            <input type="text" id="iptv-search" placeholder="Buscar canal..." style="width: 100%;">
+          </div>
+          <div style="width: 250px;">
+            <span class="label">GROUP/CATEGORY:</span>
+            <select id="iptv-group-select" style="width: 100%;">
+              <option value="">[ ALL GROUPS ]</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-top: 15px; max-height: 300px; overflow-y: scroll; border: 1px solid #ffb000;">
+          <table class="brut-table" style="margin: 0; width: 100%;">
+            <thead>
+              <tr style="position: sticky; top: 0; background-color: #0A0A0A; z-index: 10;">
+                <th style="width: 80px;">LOGO</th>
+                <th>CHANNEL NAME</th>
+                <th>GROUP / CATEGORY</th>
+                <th style="width: 120px; text-align: center;">CAST</th>
+              </tr>
+            </thead>
+            <tbody id="iptv-tbody">
+              <tr>
+                <td colspan="4" class="sub-text" style="text-align: center;">[ NO PLAYLIST LOADED. ENTER URL AND CLICK LOAD ]</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="control-row" style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; gap: 10px;">
+            <button id="btn-iptv-prev" class="brut-btn" style="width: auto; padding: 8px 20px;" disabled>[ ◄ PREV CHANNEL ]</button>
+            <button id="btn-iptv-next" class="brut-btn" style="width: auto; padding: 8px 20px;" disabled>[ NEXT CHANNEL ► ]</button>
+          </div>
+          <span class="sub-text" id="iptv-status-text" style="color: #ffb000;">NO CHANNEL PLAYING</span>
+        </div>
+      </div>
+    </section>
+
     <footer class="panel-brut grid-footer">
       <div class="panel-header">[ SYSTEM CONTROL & DIAGNOSTICS ]</div>
       <div class="panel-body console-grid">

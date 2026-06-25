@@ -348,3 +348,14 @@ body {
     gap: 5px;
   }
 }
+
+/* Logos para IPTV */
+.iptv-logo {
+  max-width: 32px;
+  max-height: 24px;
+  object-fit: contain;
+  vertical-align: middle;
+  background-color: #121212;
+  border: 1px solid #333;
+}
+

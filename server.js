@@ -72,7 +72,8 @@ app.get('/api/status', requireAuth, (req, res) => {
         { name: 'adguardhome', status: 'running' },
         { name: 'casaos', status: 'running' },
         { name: 'tailscale', status: 'exited' }
-      ]
+      ],
+      iptv_url: config.iptv_url || ''
     });
   }
 
@@ -157,8 +158,24 @@ app.get('/api/status', requireAuth, (req, res) => {
         ram_total_mb: ramTotal
       },
       disks: diskList,
-      docker: dockerList
+      docker: dockerList,
+      iptv_url: config.iptv_url || ''
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Guardar URL de lista IPTV
+app.post('/api/iptv/save', requireAuth, (req, res) => {
+  const { url } = req.body;
+  if (url === undefined) {
+    return res.status(400).json({ error: 'MISSING_PLAYLIST_URL' });
+  }
+  try {
+    config.iptv_url = url;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+    res.json({ success: true, iptv_url: config.iptv_url });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -524,6 +541,546 @@ app.post('/api/upgrader/download-album', requireAuth, (req, res) => {
     res.json({ success: true });
   } else {
     res.status(500).json({ error: 'FAILED_TO_INJECT_DOWNLOAD' });
+  }
+});
+
+// === DLNA CASTING & DISCOVERY ENGINE ===
+const dgram = require('dgram');
+const http = require('http');
+
+let discoveredDevices = {}; // Key: Location, Value: { name, controlUrl, ip }
+
+function getDhcpIps() {
+  const ips = [];
+  try {
+    const leasePath = '/var/lib/NetworkManager/dnsmasq-enp0s31f6.leases';
+    if (fs.existsSync(leasePath)) {
+      const content = fs.readFileSync(leasePath, 'utf8');
+      content.split('\n').forEach(line => {
+        if (!line) return;
+        const parts = line.split(' ');
+        if (parts.length >= 3) {
+          const ip = parts[2];
+          if (ip.match(/^10\.42\.0\.[0-9]+$/) && ip !== '10.42.0.1') {
+            ips.push(ip);
+          }
+        }
+      });
+    }
+  } catch (err) {
+    console.error('>>> DLNA: Error reading DHCP leases:', err.message);
+  }
+  return ips;
+}
+
+function getArpIps() {
+  const ips = [];
+  try {
+    const arpPath = '/proc/net/arp';
+    if (fs.existsSync(arpPath)) {
+      const content = fs.readFileSync(arpPath, 'utf8');
+      content.split('\n').forEach((line, index) => {
+        if (index === 0 || !line) return;
+        const parts = line.replace(/\s+/g, ' ').trim().split(' ');
+        if (parts.length >= 1) {
+          const ip = parts[0];
+          if (ip.match(/^10\.42\.0\.[0-9]+$/) && ip !== '10.42.0.1') {
+            ips.push(ip);
+          }
+        }
+      });
+    }
+  } catch (err) {
+    console.error('>>> DLNA: Error reading ARP table:', err.message);
+  }
+  return ips;
+}
+
+function probeDeviceDirectly(ip) {
+  const candidates = [
+    `http://${ip}:9197/dmr`,
+    `http://${ip}:7676/smp_2_`,
+    `http://${ip}:7676/smp_3_`,
+    `http://${ip}:7676/smp_4_`
+  ];
+  
+  candidates.forEach(location => {
+    if (discoveredDevices[location]) return;
+    
+    const req = http.get(location, { timeout: 1500 }, (res) => {
+      if (res.statusCode !== 200) return;
+      
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        const nameMatch = data.match(/<friendlyName>([^<]+)<\/friendlyName>/);
+        const friendlyName = nameMatch ? nameMatch[1].trim() : 'DLNA Device';
+        
+        const avtIndex = data.indexOf('urn:schemas-upnp-org:service:AVTransport:1');
+        if (avtIndex === -1) return;
+        
+        const serviceBlock = data.substring(avtIndex, data.indexOf('</service>', avtIndex));
+        const controlMatch = serviceBlock.match(/<controlURL>([^<]+)<\/controlURL>/);
+        if (!controlMatch) return;
+        
+        let controlURL = controlMatch[1].trim();
+        const urlObj = new URL(location);
+        if (!controlURL.startsWith('http')) {
+          controlURL = `${urlObj.protocol}//${urlObj.host}${controlURL.startsWith('/') ? '' : '/'}${controlURL}`;
+        }
+        
+        discoveredDevices[location] = {
+          name: friendlyName,
+          controlUrl: controlURL,
+          ip: urlObj.hostname
+        };
+        console.log(`>>> DLNA (Direct Probe): Discovered "${friendlyName}" at ${urlObj.hostname}`);
+      });
+    });
+    
+    req.on('error', () => {});
+    req.on('timeout', () => req.destroy());
+  });
+}
+
+function startDiscovery() {
+  // Ejecutar sondeo directo híbrido sobre hosts activos de la red local
+  try {
+    const uniqueIps = Array.from(new Set([...getDhcpIps(), ...getArpIps()]));
+    console.log(`>>> DLNA: Starting direct IP probing on active hosts:`, uniqueIps);
+    uniqueIps.forEach(probeDeviceDirectly);
+  } catch (err) {
+    console.error('>>> DLNA: Error starting direct IP prober:', err.message);
+  }
+
+  const socket = dgram.createSocket('udp4');
+  
+  socket.on('error', (err) => {
+    console.error('>>> DLNA/SSDP Socket Error:', err.message);
+  });
+  
+  socket.on('message', (msg) => {
+    const headers = msg.toString();
+    const locMatch = headers.match(/LOCATION:\s*(http:\/\/\S+)/i);
+    if (!locMatch) return;
+    
+    const location = locMatch[1];
+    if (discoveredDevices[location]) return;
+    
+    // Consultar el XML del dispositivo
+    http.get(location, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        const nameMatch = data.match(/<friendlyName>([^<]+)<\/friendlyName>/);
+        const friendlyName = nameMatch ? nameMatch[1].trim() : 'DLNA Device';
+        
+        const avtIndex = data.indexOf('urn:schemas-upnp-org:service:AVTransport:1');
+        if (avtIndex === -1) return;
+        
+        const serviceBlock = data.substring(avtIndex, data.indexOf('</service>', avtIndex));
+        const controlMatch = serviceBlock.match(/<controlURL>([^<]+)<\/controlURL>/);
+        if (!controlMatch) return;
+        
+        let controlURL = controlMatch[1].trim();
+        const urlObj = new URL(location);
+        if (!controlURL.startsWith('http')) {
+          controlURL = `${urlObj.protocol}//${urlObj.host}${controlURL.startsWith('/') ? '' : '/'}${controlURL}`;
+        }
+        
+        discoveredDevices[location] = {
+          name: friendlyName,
+          controlUrl: controlURL,
+          ip: urlObj.hostname
+        };
+        console.log(`>>> DLNA: Discovered "${friendlyName}" at ${urlObj.hostname}`);
+      });
+    }).on('error', () => {});
+  });
+  
+  socket.bind(0, '10.42.0.1', () => {
+    try {
+      socket.setMulticastInterface('10.42.0.1');
+    } catch (e) {
+      console.error('>>> DLNA: Error setting multicast interface:', e.message);
+    }
+    
+    const ssdpMsg = 
+      'M-SEARCH * HTTP/1.1\r\n' +
+      'HOST: 239.255.255.250:1900\r\n' +
+      'MAN: "ssdp:discover"\r\n' +
+      'MX: 2\r\n' +
+      'ST: ssdp:all\r\n\r\n';
+      
+    socket.send(Buffer.from(ssdpMsg), 1900, '239.255.255.250', (err) => {
+      if (err) console.error('>>> DLNA: Error sending SSDP:', err.message);
+    });
+  });
+  
+  setTimeout(() => {
+    try { socket.close(); } catch(e) {}
+  }, 4000);
+}
+
+// Iniciar un escaneo inicial al arrancar el servidor
+setTimeout(startDiscovery, 2000);
+
+function postSOAP(controlUrl, action, bodyContent) {
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(controlUrl);
+    const soapEnvelope = 
+      `<?xml version="1.0" encoding="utf-8"?>` +
+      `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">` +
+        `<s:Body>${bodyContent}</s:Body>` +
+      `</s:Envelope>`;
+      
+    const req = http.request({
+      hostname: urlObj.hostname,
+      port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+      path: urlObj.pathname + urlObj.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml; charset="utf-8"',
+        'SOAPAction': `"urn:schemas-upnp-org:service:AVTransport:1#${action}"`,
+        'Content-Length': Buffer.byteLength(soapEnvelope)
+      }
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(data);
+        } else {
+          reject(new Error(`SOAP Action ${action} failed (${res.statusCode}): ${data}`));
+        }
+      });
+    });
+    
+    req.on('error', (err) => reject(err));
+    req.write(soapEnvelope);
+    req.end();
+  });
+}
+
+function castVideo(controlUrl, videoUrl) {
+  let castUrl = videoUrl;
+  if (videoUrl.startsWith('http')) {
+    const base64Url = Buffer.from(videoUrl).toString('base64');
+    castUrl = `http://10.42.0.1:8090/api/dlna/proxy?url=${encodeURIComponent(base64Url)}`;
+    console.log(`>>> DLNA: Wrapping target stream in local HTTP proxy. Cast URL: ${castUrl}`);
+  }
+
+  const metadata = `<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/">` +
+    `<item id="0" parentID="0" restricted="1">` +
+      `<dc:title>Video Stream</dc:title>` +
+      `<upnp:class>object.item.videoItem</upnp:class>` +
+      `<res protocolInfo="http-get:*:*:*">${castUrl}</res>` +
+    `</item>` +
+  `</DIDL-Lite>`;
+  
+  const escapedMetadata = metadata
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
+  const setUriBody = 
+    `<u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">` +
+      `<InstanceID>0</InstanceID>` +
+      `<CurrentURI>${castUrl}</CurrentURI>` +
+      `<CurrentURIMetaData>${escapedMetadata}</CurrentURIMetaData>` +
+    `</u:SetAVTransportURI>`;
+
+  const playBody = 
+    `<u:Play xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">` +
+      `<InstanceID>0</InstanceID>` +
+      `<Speed>1</Speed>` +
+    `</u:Play>`;
+
+  return postSOAP(controlUrl, 'SetAVTransportURI', setUriBody)
+    .then(() => new Promise(resolve => setTimeout(resolve, 1000)))
+    .then(() => postSOAP(controlUrl, 'Play', playBody));
+}
+
+function fetchHtmlWithCurl(url) {
+  return new Promise((resolve, reject) => {
+    const escapedUrl = url.replace(/'/g, "'\\''");
+    const cmd = `curl -s -L --connect-timeout 8 --max-time 15 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -e "${escapedUrl}" "${escapedUrl}"`;
+    const { exec } = require('child_process');
+    exec(cmd, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) return reject(err);
+      resolve(stdout);
+    });
+  });
+}
+
+async function sniffVideoUrl(targetUrl, depth = 0) {
+  if (depth > 3) return null;
+  
+  // 1. Descodificar Base64 de parámetro 'r' si existe (usado por Rojadirecta)
+  try {
+    const urlObj = new URL(targetUrl);
+    const rParam = urlObj.searchParams.get('r');
+    if (rParam) {
+      const decoded = Buffer.from(rParam, 'base64').toString('utf8');
+      if (decoded.startsWith('http')) {
+        targetUrl = decoded;
+      }
+    }
+  } catch (e) {}
+
+  // 2. Extraer parámetro 'get' si existe (creación de iframe dinámica en JS de Rojadirecta)
+  try {
+    const urlObj2 = new URL(targetUrl);
+    const getParam = urlObj2.searchParams.get('get');
+    if (getParam && getParam.startsWith('http')) {
+      targetUrl = getParam;
+    }
+  } catch (e) {}
+
+  console.log(`>>> Sniffer: Fetching (${depth}) ${targetUrl}`);
+  
+  try {
+    const html = await fetchHtmlWithCurl(targetUrl);
+    if (!html || html.trim() === '') return null;
+    
+    // A. Buscar links de video directos (.m3u8 o .mp4)
+    const streamRegex = /(https?:\/\/[^"'\s>]+?\.(?:m3u8|mp4)(?:\?[^"'\s>]+)?)/gi;
+    const matches = html.match(streamRegex);
+    if (matches && matches.length > 0) {
+      let videoUrl = matches[0].replace(/&amp;/g, '&');
+      console.log(`>>> Sniffer: Found stream! ${videoUrl}`);
+      return videoUrl;
+    }
+    
+    // A2. Buscar en la configuración JSON del reproductor (stream_url)
+    const streamUrlRegex = /"stream_url"\s*:\s*"([^"]+)"/i;
+    const jsonMatch = html.match(streamUrlRegex);
+    if (jsonMatch && jsonMatch[1]) {
+      let videoUrl = jsonMatch[1].replace(/\\/g, ''); // Desescapar barras inclinadas \/ -> /
+      console.log(`>>> Sniffer: Found stream in JSON config! ${videoUrl}`);
+      return videoUrl;
+    }
+    
+    // B. Buscar iframes embebidos si no encontramos link directo
+    const iframeRegex = /<iframe[^>]+src=["'](https?:\/\/[^"']+)["']/gi;
+    let iframeMatch;
+    while ((iframeMatch = iframeRegex.exec(html)) !== null) {
+      const iframeUrl = iframeMatch[1].replace(/&amp;/g, '&');
+      if (iframeUrl !== targetUrl) { // Evitar bucles infinitos
+        const found = await sniffVideoUrl(iframeUrl, depth + 1);
+        if (found) return found;
+      }
+    }
+  } catch (err) {
+    console.error(`>>> Sniffer Error: ${err.message}`);
+  }
+  
+  return null;
+}
+
+// Endpoint de proxy local para hacer bridge de streams de video HTTP/HTTPS sin requireAuth para permitir el acceso directo de la TV
+app.get('/api/dlna/proxy', async (req, res) => {
+  const { url: encodedUrl, referer } = req.query;
+  if (!encodedUrl) return res.status(400).send('Missing URL');
+  
+  try {
+    const targetUrl = Buffer.from(encodedUrl, 'base64').toString('utf8');
+    const urlObj = new URL(targetUrl);
+    const isM3U8 = urlObj.pathname.endsWith('.m3u8') || targetUrl.includes('.m3u8');
+    
+    console.log(`>>> Stream Proxy: Piping ${targetUrl} (M3U8: ${isM3U8})`);
+    
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    };
+    if (referer) {
+      headers['Referer'] = referer;
+    } else {
+      headers['Referer'] = urlObj.origin;
+    }
+    
+    const transport = targetUrl.startsWith('https') ? require('https') : require('http');
+    
+    const proxyReq = transport.request(targetUrl, {
+      method: 'GET',
+      headers: headers,
+      timeout: 10000
+    }, (proxyRes) => {
+      const contentType = proxyRes.headers['content-type'] || '';
+      
+      if (isM3U8 || contentType.includes('mpegurl') || contentType.includes('application/x-mpegURL')) {
+        // Recolectar datos en memoria para reescribir URLs HLS
+        let data = [];
+        proxyRes.on('data', chunk => data.push(chunk));
+        proxyRes.on('end', () => {
+          const body = Buffer.concat(data).toString('utf8');
+          const lines = body.split('\n');
+          const rewrittenLines = lines.map(line => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) return line;
+            
+            // Convertir a absoluta
+            let absoluteUrl = trimmed;
+            try {
+              if (!trimmed.startsWith('http')) {
+                absoluteUrl = new URL(trimmed, targetUrl).href;
+              }
+            } catch (e) {
+              return line;
+            }
+            
+            const base64Url = Buffer.from(absoluteUrl).toString('base64');
+            return `http://10.42.0.1:8090/api/dlna/proxy?url=${encodeURIComponent(base64Url)}`;
+          });
+          
+          const rewrittenBody = rewrittenLines.join('\n');
+          res.writeHead(proxyRes.statusCode, {
+            'Content-Type': 'application/x-mpegURL',
+            'Access-Control-Allow-Origin': '*',
+            'Connection': 'keep-alive',
+            'Content-Length': Buffer.byteLength(rewrittenBody)
+          });
+          res.end(rewrittenBody);
+        });
+      } else {
+        // Binario directo (Pipe) para segmentos .ts u otros archivos de video
+        res.writeHead(proxyRes.statusCode, {
+          'Content-Type': contentType || 'application/octet-stream',
+          'Access-Control-Allow-Origin': '*',
+          'Connection': 'keep-alive'
+        });
+        proxyRes.pipe(res);
+      }
+    });
+    
+    proxyReq.on('error', (err) => {
+      console.error(`>>> Stream Proxy Error:`, err.message);
+      res.status(500).send(err.message);
+    });
+    
+    proxyReq.end();
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+// Endpoints de DLNA
+app.post('/api/dlna/sniff', requireAuth, async (req, res) => {
+  const { pageUrl } = req.body;
+  if (!pageUrl) {
+    return res.status(400).json({ error: 'MISSING_PAGE_URL' });
+  }
+  
+  try {
+    const videoUrl = await sniffVideoUrl(pageUrl);
+    if (videoUrl) {
+      res.json({ success: true, videoUrl });
+    } else {
+      res.status(404).json({ error: 'NO_STREAM_FOUND' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/dlna/scan', requireAuth, (req, res) => {
+  startDiscovery();
+  res.json({ success: true, message: 'Scan started' });
+});
+
+app.get('/api/dlna/devices', requireAuth, (req, res) => {
+  res.json(Object.values(discoveredDevices));
+});
+
+app.post('/api/dlna/cast', requireAuth, async (req, res) => {
+  const { controlUrl, videoUrl } = req.body;
+  if (!controlUrl || !videoUrl) {
+    return res.status(400).json({ error: 'MISSING_PARAMETERS' });
+  }
+  
+  try {
+    await castVideo(controlUrl, videoUrl);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('>>> DLNA: Cast error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/dlna/control', requireAuth, async (req, res) => {
+  const { controlUrl, action } = req.body;
+  if (!controlUrl || !['Play', 'Pause', 'Stop'].includes(action)) {
+    return res.status(400).json({ error: 'INVALID_PARAMETERS' });
+  }
+  
+  const bodyContent = 
+    `<u:${action} xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">` +
+      `<InstanceID>0</InstanceID>` +
+      (action === 'Play' ? `<Speed>1</Speed>` : '') +
+    `</u:${action}>`;
+    
+  try {
+    await postSOAP(controlUrl, action, bodyContent);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Parser de listas de canales IPTV M3U
+function parseM3U(content) {
+  const lines = content.split('\n');
+  const channels = [];
+  let currentChannel = null;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith('#EXTINF:')) {
+      currentChannel = {};
+      const groupMatch = line.match(/group-title="([^"]+)"/i);
+      const logoMatch = line.match(/tvg-logo="([^"]+)"/i);
+      const nameMatch = line.match(/tvg-name="([^"]+)"/i);
+      
+      currentChannel.group = groupMatch ? groupMatch[1] : 'Otros';
+      currentChannel.logo = logoMatch ? logoMatch[1] : '';
+      currentChannel.tvgName = nameMatch ? nameMatch[1] : '';
+      
+      const lastComma = line.lastIndexOf(',');
+      if (lastComma !== -1) {
+        currentChannel.name = line.substring(lastComma + 1).trim();
+      } else {
+        currentChannel.name = 'Canal sin nombre';
+      }
+    } else if (line.startsWith('http') && currentChannel) {
+      currentChannel.url = line;
+      channels.push(currentChannel);
+      currentChannel = null;
+    }
+  }
+  return channels;
+}
+app.parseM3U = parseM3U;
+
+// Descargar y parsear lista IPTV
+app.post('/api/iptv/load', requireAuth, async (req, res) => {
+  const { url } = req.body;
+  if (!url) {
+    return res.status(400).json({ error: 'MISSING_PLAYLIST_URL' });
+  }
+  try {
+    console.log(`>>> IPTV: Fetching playlist from ${url}`);
+    const content = await fetchHtmlWithCurl(url);
+    if (!content) {
+      throw new Error('Empty response from playlist URL');
+    }
+    const channels = parseM3U(content);
+    console.log(`>>> IPTV: Loaded ${channels.length} channels`);
+    res.json({ success: true, channels });
+  } catch (err) {
+    console.error(`>>> IPTV Error:`, err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -1,5 +1,10 @@
 /* --- DASHBOARD LOGIC: SAT_NAS TELEMETRY --- */
 
+let loadedChannels = [];
+let filteredChannels = [];
+let currentChannelIndex = -1;
+let hasLoadedIptvOnInit = false;
+
 function makeAsciiBar(pct) {
   const rounded = Math.min(100, Math.max(0, parseFloat(pct) || 0));
   const blocks = Math.round(rounded / 10);
@@ -85,6 +90,16 @@ async function fetchStatus() {
         `;
         dockerTbody.appendChild(row);
       });
+    }
+
+    // Carga automatica inicial de IPTV
+    if (data.iptv_url && !hasLoadedIptvOnInit) {
+      hasLoadedIptvOnInit = true;
+      const iptvUrlInput = document.getElementById('iptv-playlist-url');
+      if (iptvUrlInput) {
+        iptvUrlInput.value = data.iptv_url;
+      }
+      loadIptvPlaylist(data.iptv_url);
     }
 
   } catch (e) {
@@ -762,3 +777,376 @@ async function checkUpgraderOnLoad() {
 fetchStatus();
 setInterval(fetchStatus, 3000);
 checkUpgraderOnLoad();
+
+/* --- DLNA MEDIA CASTING LOGIC --- */
+
+const dlnaSelect = document.getElementById('dlna-device-select');
+const dlnaScanBtn = document.getElementById('btn-scan-dlna');
+const dlnaCastBtn = document.getElementById('btn-cast-dlna');
+const dlnaUrlInput = document.getElementById('dlna-video-url');
+const dlnaStatusText = document.getElementById('dlna-status-text');
+
+const dlnaPlayBtn = document.getElementById('btn-dlna-play');
+const dlnaPauseBtn = document.getElementById('btn-dlna-pause');
+const dlnaStopBtn = document.getElementById('btn-dlna-stop');
+
+async function updateDlnaDevices() {
+  try {
+    const res = await fetch('/api/dlna/devices');
+    if (!res.ok) throw new Error('Failed to get DLNA devices');
+    
+    const devices = await res.json();
+    if (!dlnaSelect) return;
+    dlnaSelect.innerHTML = '';
+    
+    if (devices.length === 0) {
+      dlnaSelect.innerHTML = '<option value="">[ NO DEVICES DETECTED - CLICK SCAN ]</option>';
+      return;
+    }
+    
+    devices.forEach(dev => {
+      const opt = document.createElement('option');
+      opt.value = dev.controlUrl;
+      opt.innerText = `${dev.name} (${dev.ip})`;
+      dlnaSelect.appendChild(opt);
+    });
+  } catch (err) {
+    console.error('Error fetching DLNA devices:', err);
+  }
+}
+
+if (dlnaScanBtn) {
+  dlnaScanBtn.addEventListener('click', async () => {
+    const consoleOut = document.getElementById('console-output');
+    dlnaScanBtn.disabled = true;
+    dlnaScanBtn.innerText = '[ SCANNING... ]';
+    if (consoleOut) consoleOut.innerText = `> STARTING DLNA NETWORK SCAN (SSDP)...\n`;
+    dlnaStatusText.innerText = 'SCANNING NETWORK...';
+    
+    try {
+      await fetch('/api/dlna/scan', { method: 'POST' });
+      // Pollear dispositivos después de 2 y 4 segundos para ir actualizando
+      setTimeout(async () => {
+        await updateDlnaDevices();
+      }, 2000);
+      
+      setTimeout(async () => {
+        await updateDlnaDevices();
+        dlnaScanBtn.disabled = false;
+        dlnaScanBtn.innerText = '[ SCAN DEVICES ]';
+        dlnaStatusText.innerText = 'SCAN COMPLETED';
+        if (consoleOut) consoleOut.innerText += `> DLNA NETWORK SCAN COMPLETED.\n`;
+      }, 4000);
+      
+    } catch (err) {
+      dlnaScanBtn.disabled = false;
+      dlnaScanBtn.innerText = '[ SCAN DEVICES ]';
+      dlnaStatusText.innerText = 'ERROR SCANNING';
+      if (consoleOut) consoleOut.innerText += `> DLNA SCAN ERROR: ${err.message}\n`;
+    }
+  });
+}
+
+if (dlnaCastBtn) {
+  dlnaCastBtn.addEventListener('click', async () => {
+    const controlUrl = dlnaSelect.value;
+    const videoUrl = dlnaUrlInput.value.trim();
+    const consoleOut = document.getElementById('console-output');
+    
+    if (!controlUrl) {
+      alert('SELECCIONA UN DISPOSITIVO DLNA/TV DE LA LISTA.');
+      return;
+    }
+    if (!videoUrl) {
+      alert('INGRESA UNA URL DE VIDEO VÁLIDA.');
+      return;
+    }
+    
+    dlnaCastBtn.disabled = true;
+    dlnaCastBtn.innerText = '[ PROCESSING... ]';
+    
+    let finalUrl = videoUrl;
+    
+    try {
+      // Evaluar si la URL es un flujo directo de video
+      const isDirect = videoUrl.toLowerCase().includes('.mp4') || 
+                       videoUrl.toLowerCase().includes('.m3u8') || 
+                       videoUrl.toLowerCase().includes('.mkv');
+                       
+      if (!isDirect) {
+        dlnaStatusText.innerText = 'RESOLVING WEBPAGE...';
+        if (consoleOut) consoleOut.innerText = `> SNIFFING WEB PAGE: ${videoUrl}\n`;
+        
+        const sniffRes = await fetch('/api/dlna/sniff', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pageUrl: videoUrl })
+        });
+        
+        const sniffData = await sniffRes.json();
+        if (!sniffRes.ok || !sniffData.success) {
+          throw new Error(sniffData.error || 'No video stream found on webpage');
+        }
+        
+        finalUrl = sniffData.videoUrl;
+        if (consoleOut) consoleOut.innerText += `> SNIFFER DETECTED: ${finalUrl}\n`;
+      }
+      
+      dlnaCastBtn.innerText = '[ CASTING... ]';
+      dlnaStatusText.innerText = 'SENDING TO TV...';
+      if (consoleOut) consoleOut.innerText += `> TRANSMITTING STREAM TO DLNA TV...\n`;
+      
+      const res = await fetch('/api/dlna/cast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ controlUrl, videoUrl: finalUrl })
+      });
+      
+      const data = await res.json();
+      dlnaCastBtn.disabled = false;
+      dlnaCastBtn.innerText = '[ CAST TO TV ]';
+      
+      if (res.ok && data.success) {
+        dlnaStatusText.innerText = 'PLAYING';
+        if (consoleOut) consoleOut.innerText += `> CAST SUCCESSFUL. TV SHOULD BE PLAYING.\n`;
+      } else {
+        throw new Error(data.error || 'Unknown error');
+      }
+    } catch (err) {
+      dlnaCastBtn.disabled = false;
+      dlnaCastBtn.innerText = '[ CAST TO TV ]';
+      dlnaStatusText.innerText = 'CAST ERROR';
+      if (consoleOut) consoleOut.innerText += `> ERROR: ${err.message}\n`;
+    }
+  });
+}
+
+async function sendDlnaControl(action) {
+  const controlUrl = dlnaSelect.value;
+  const consoleOut = document.getElementById('console-output');
+  if (!controlUrl) return;
+  
+  dlnaStatusText.innerText = `SENDING ${action.toUpperCase()}...`;
+  try {
+    const res = await fetch('/api/dlna/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ controlUrl, action })
+    });
+    
+    const data = await res.json();
+    if (res.ok && data.success) {
+      dlnaStatusText.innerText = action === 'Stop' ? 'STOPPED' : action === 'Pause' ? 'PAUSED' : 'PLAYING';
+      if (consoleOut) consoleOut.innerText += `> DLNA CONTROL SUCCESS: ${action.toUpperCase()}\n`;
+    } else {
+      throw new Error(data.error || 'Unknown error');
+    }
+  } catch (err) {
+    dlnaStatusText.innerText = 'CONTROL ERROR';
+    if (consoleOut) consoleOut.innerText += `> DLNA CONTROL ERROR: ${err.message}\n`;
+  }
+}
+
+if (dlnaPlayBtn) dlnaPlayBtn.addEventListener('click', () => sendDlnaControl('Play'));
+if (dlnaPauseBtn) dlnaPauseBtn.addEventListener('click', () => sendDlnaControl('Pause'));
+if (dlnaStopBtn) dlnaStopBtn.addEventListener('click', () => sendDlnaControl('Stop'));
+
+// === IPTV LOGIC AND INTERACTIVE CHANNELS ===
+
+async function loadIptvPlaylist(url) {
+  const tbody = document.getElementById('iptv-tbody');
+  const consoleOut = document.getElementById('console-output');
+  
+  if (consoleOut) consoleOut.innerText = `> LOADING IPTV PLAYLIST FROM: ${url}...\n`;
+  tbody.innerHTML = `<tr><td colspan="4" class="sub-text" style="text-align: center; color: #ffb000;">[ DOWNLOADING & PARSING PLAYLIST... ]</td></tr>`;
+  
+  try {
+    const res = await fetch('/api/iptv/load', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to load playlist');
+    }
+    
+    loadedChannels = data.channels || [];
+    if (consoleOut) consoleOut.innerText += `> IPTV PLAYLIST LOADED SUCCESSFULLY. ${loadedChannels.length} CHANNELS FOUND.\n`;
+    
+    // Rellenar grupos en el selector
+    const groups = Array.from(new Set(loadedChannels.map(c => c.group))).sort();
+    const select = document.getElementById('iptv-group-select');
+    select.innerHTML = '<option value="">[ ALL GROUPS ]</option>';
+    groups.forEach(g => {
+      const opt = document.createElement('option');
+      opt.value = g;
+      opt.innerText = g.toUpperCase();
+      select.appendChild(opt);
+    });
+    
+    filterAndRenderChannels();
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="4" class="sub-text" style="text-align: center; color: #E61919;">[ ERROR LOADING PLAYLIST: ${err.message.toUpperCase()} ]</td></tr>`;
+    if (consoleOut) consoleOut.innerText += `> IPTV LOAD ERROR: ${err.message}\n`;
+  }
+}
+
+async function saveAndLoadIptv() {
+  const url = document.getElementById('iptv-playlist-url').value.trim();
+  if (!url) {
+    alert('INGRESA UNA URL DE LISTA IPTV VALIDA.');
+    return;
+  }
+  
+  const consoleOut = document.getElementById('console-output');
+  if (consoleOut) consoleOut.innerText = `> PERSISTING IPTV URL TO CONFIG.JSON...\n`;
+  
+  try {
+    const res = await fetch('/api/iptv/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to save playlist URL');
+    }
+    
+    if (consoleOut) consoleOut.innerText += `> URL PERSISTED SUCCESSFULLY.\n`;
+    loadIptvPlaylist(url);
+  } catch (err) {
+    if (consoleOut) consoleOut.innerText += `> SAVE CONFIG ERROR: ${err.message}\n`;
+    // Intentar cargar de todos modos
+    loadIptvPlaylist(url);
+  }
+}
+
+function filterAndRenderChannels() {
+  const searchVal = document.getElementById('iptv-search').value.toLowerCase();
+  const groupVal = document.getElementById('iptv-group-select').value;
+  
+  filteredChannels = loadedChannels.filter(c => {
+    const matchesSearch = c.name.toLowerCase().includes(searchVal);
+    const matchesGroup = !groupVal || c.group === groupVal;
+    return matchesSearch && matchesGroup;
+  });
+  
+  const tbody = document.getElementById('iptv-tbody');
+  tbody.innerHTML = '';
+  
+  if (filteredChannels.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" class="sub-text" style="text-align: center;">[ NO CHANNELS MATCH FILTER ]</td></tr>`;
+    return;
+  }
+  
+  filteredChannels.forEach((chan, idx) => {
+    const tr = document.createElement('tr');
+    
+    // Logo o fallback
+    let logoHtml = '';
+    if (chan.logo) {
+      logoHtml = `<img src="${chan.logo}" class="iptv-logo" alt="LOGO" onerror="this.outerHTML='[TV]'">`;
+    } else {
+      logoHtml = '[TV]';
+    }
+    
+    tr.innerHTML = `
+      <td style="text-align: center; vertical-align: middle;">${logoHtml}</td>
+      <td style="font-weight: bold; vertical-align: middle;">${chan.name}</td>
+      <td style="vertical-align: middle;">${chan.group}</td>
+      <td style="text-align: center; vertical-align: middle;">
+        <button onclick="castIptvChannel(${idx})" class="brut-btn-sm">[ CAST ]</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function castIptvChannel(index) {
+  if (index < 0 || index >= filteredChannels.length) return;
+  
+  const controlUrl = document.getElementById('dlna-device-select').value;
+  if (!controlUrl) {
+    alert('SELECCIONA UN DISPOSITIVO DLNA/TV DE LA LISTA EN EL PANEL CAST.');
+    return;
+  }
+  
+  currentChannelIndex = index;
+  const chan = filteredChannels[index];
+  const consoleOut = document.getElementById('console-output');
+  const castStatus = document.getElementById('iptv-status-text');
+  
+  if (consoleOut) consoleOut.innerText = `> CASTING IPTV CHANNEL: ${chan.name.toUpperCase()}...\n`;
+  castStatus.innerText = `CASTING: ${chan.name.toUpperCase()}`;
+  
+  try {
+    const res = await fetch('/api/dlna/cast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ controlUrl, videoUrl: chan.url })
+    });
+    
+    const data = await res.json();
+    if (res.ok && data.success) {
+      castStatus.innerText = `PLAYING: ${chan.name.toUpperCase()}`;
+      if (consoleOut) consoleOut.innerText += `> CAST SUCCESSFUL. TV SHOULD PLAY "${chan.name.toUpperCase()}".\n`;
+      
+      // Habilitar / Deshabilitar botones de control remoto
+      document.getElementById('btn-iptv-prev').disabled = false;
+      document.getElementById('btn-iptv-next').disabled = false;
+    } else {
+      throw new Error(data.error || 'Unknown error');
+    }
+  } catch (err) {
+    castStatus.innerText = `ERROR CASTING: ${chan.name.toUpperCase()}`;
+    if (consoleOut) consoleOut.innerText += `> CAST ERROR: ${err.message}\n`;
+  }
+}
+
+// Bindings globales para onclick en las filas
+window.castIptvChannel = castIptvChannel;
+
+// Setup listeners para IPTV
+const btnLoadIptv = document.getElementById('btn-load-iptv');
+if (btnLoadIptv) {
+  btnLoadIptv.addEventListener('click', saveAndLoadIptv);
+}
+
+const iptvSearch = document.getElementById('iptv-search');
+if (iptvSearch) {
+  iptvSearch.addEventListener('input', filterAndRenderChannels);
+}
+
+const iptvGroupSelect = document.getElementById('iptv-group-select');
+if (iptvGroupSelect) {
+  iptvGroupSelect.addEventListener('change', filterAndRenderChannels);
+}
+
+const btnIptvPrev = document.getElementById('btn-iptv-prev');
+if (btnIptvPrev) {
+  btnIptvPrev.addEventListener('click', () => {
+    if (currentChannelIndex > 0) {
+      castIptvChannel(currentChannelIndex - 1);
+    } else if (filteredChannels.length > 0) {
+      castIptvChannel(filteredChannels.length - 1);
+    }
+  });
+}
+
+const btnIptvNext = document.getElementById('btn-iptv-next');
+if (btnIptvNext) {
+  btnIptvNext.addEventListener('click', () => {
+    if (currentChannelIndex < filteredChannels.length - 1) {
+      castIptvChannel(currentChannelIndex + 1);
+    } else if (filteredChannels.length > 0) {
+      castIptvChannel(0);
+    }
+  });
+}
+
+// Cargar dispositivos DLNA detectados al inicio
+updateDlnaDevices();
+

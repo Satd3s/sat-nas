@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test tests/config.test.js tests/auth.test.js tests/telemetry.test.js tests/actions.test.js"
+    "test": "node --test tests/config.test.js tests/auth.test.js tests/telemetry.test.js tests/actions.test.js tests/iptv.test.js"
   },
   "dependencies": {
     "express": "^4.19.2",

@@ -994,7 +994,14 @@ async function loadIptvPlaylist(url) {
 }
 
 async function saveAndLoadIptv() {
-  const url = document.getElementById('iptv-playlist-url').value.trim();
+  let url = document.getElementById('iptv-playlist-url').value.trim();
+  
+  // Limpieza de punto final accidental (por ejemplo, si se copió de una frase terminada en punto)
+  if (url.endsWith('.')) {
+    url = url.substring(0, url.length - 1);
+    document.getElementById('iptv-playlist-url').value = url;
+  }
+  
   if (!url) {
     alert('INGRESA UNA URL DE LISTA IPTV VALIDA.');
     return;

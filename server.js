@@ -1075,6 +1075,9 @@ app.post('/api/iptv/load', requireAuth, async (req, res) => {
     if (!content) {
       throw new Error('Empty response from playlist URL');
     }
+    if (!content.includes('#EXTM3U')) {
+      throw new Error('Invalid playlist format (missing #EXTM3U)');
+    }
     const channels = parseM3U(content);
     console.log(`>>> IPTV: Loaded ${channels.length} channels`);
     res.json({ success: true, channels });
